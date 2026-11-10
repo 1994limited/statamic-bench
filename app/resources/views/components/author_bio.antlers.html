@@ -1,0 +1,13 @@
+{{ author }}
+    <aside class="mt-12 flex gap-5 rounded-xl bg-slate-50 p-6">
+        {{ if photo }}<img src="{{ photo:url }}" alt="" width="72" height="72" loading="lazy" class="h-18 w-18 flex-none rounded-full object-cover">{{ /if }}
+        <div>
+            <p class="text-xs uppercase tracking-wide text-slate-500">Written by</p>
+            <p class="font-semibold"><a href="{{ url }}">{{ title }}</a> <span class="font-normal text-slate-500">&middot; {{ role }}</span></p>
+            <div class="prose prose-sm mt-2 text-slate-600">{{ bio | truncate(220, '…') }}</div>
+            <ul class="mt-2 flex gap-3 text-xs">
+                {{ socials }}<li><a href="{{ url }}" rel="me noopener" class="underline">{{ network | title }}</a></li>{{ /socials }}
+            </ul>
+        </div>
+    </aside>
+{{ /author }}

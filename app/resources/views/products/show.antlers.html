@@ -1,0 +1,32 @@
+<div class="mx-auto grid max-w-7xl gap-12 px-4 py-12 lg:grid-cols-2 lg:px-8">
+    <ul class="grid grid-cols-2 gap-4">
+        {{ gallery }}
+            <li class="{{ first ? 'col-span-2' : '' }} overflow-hidden rounded-xl bg-slate-100">
+                <img src="{{ url }}" alt="{{ alt }}" width="{{ width }}" height="{{ height }}" loading="{{ first ? 'eager' : 'lazy' }}" class="h-full w-full object-cover">
+            </li>
+        {{ /gallery }}
+    </ul>
+    <div>
+        {{ partial:components/term_list :terms="categories" }}
+        <div class="mt-3">{{ partial:components/heading :text="title" level="1" size="xl" }}</div>
+        <p class="mt-1 text-xs uppercase tracking-wide text-slate-400">SKU {{ sku }}</p>
+        <div class="mt-4">{{ partial:components/price }}</div>
+        <p class="mt-4 text-slate-600">{{ summary }}</p>
+        <p class="mt-6">
+            <button type="button" class="rounded-md bg-indigo-600 px-6 py-3 font-semibold text-white disabled:bg-slate-300"{{ unless in_stock }} disabled{{ /unless }}>
+                {{ in_stock ? 'Add to basket' : 'Sold out' }}
+            </button>
+        </p>
+        <div class="prose prose-slate mt-8">{{ description }}</div>
+        {{ partial:products/_specs }}
+    </div>
+</div>
+{{ if related }}
+    {{ partial:components/section block="related" heading="You might also like" tone="muted" }}
+        <div class="grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
+            {{ related }}
+                {{ partial:components/card_product }}
+            {{ /related }}
+        </div>
+    {{ /partial:components/section }}
+{{ /if }}

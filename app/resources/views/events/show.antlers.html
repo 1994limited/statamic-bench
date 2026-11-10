@@ -1,0 +1,16 @@
+{{ partial:components/page_header eyebrow="Event" :intro="summary" }}
+<div class="mx-auto max-w-3xl px-4 py-12 lg:px-0">
+    <dl class="grid grid-cols-2 gap-4 rounded-xl bg-slate-50 p-6 text-sm">
+        <div><dt class="text-slate-500">Date</dt><dd class="font-semibold">{{ date format="l j F Y" }}</dd></div>
+        <div><dt class="text-slate-500">Venue</dt><dd class="font-semibold">{{ venue }}</dd></div>
+    </dl>
+    <div class="prose prose-slate mt-8">{{ body }}</div>
+    {{ if speakers }}
+        <h2 class="mt-10 text-xl font-bold">Speakers</h2>
+        <div class="mt-4 grid gap-4 sm:grid-cols-2">
+            {{ speakers }}
+                {{ partial:components/card_person }}
+            {{ /speakers }}
+        </div>
+    {{ /if }}
+</div>

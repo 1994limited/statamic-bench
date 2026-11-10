@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="{{ site:short_locale }}" class="scroll-smooth antialiased">
+<head>
+    {{ partial:partials/head }}
+    {{ yield:head }}
+</head>
+<body class="flex min-h-screen flex-col bg-white text-slate-800 {{ segment_1 ? 'section-{segment_1}' : 'section-home' }}">
+    <a href="#main" class="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-50 focus:rounded focus:bg-white focus:px-4 focus:py-2">Skip to content</a>
+    {{ partial:partials/announcement }}
+    {{ partial:partials/header }}
+    {{ unless is_homepage }}
+        {{ partial:partials/breadcrumbs }}
+    {{ /unless }}
+    <main id="main" class="flex-1">
+        {{ template_content }}
+    </main>
+    {{ partial:partials/newsletter }}
+    {{ partial:partials/footer }}
+    {{ yield:scripts }}
+</body>
+</html>

@@ -1,0 +1,30 @@
+<nav aria-label="Main" class="hidden lg:block">
+    <ul class="flex items-center gap-6 text-sm font-medium">
+        {{ nav:main max_depth="3" }}
+            <li class="group relative">
+                <a href="{{ url }}" class="inline-flex items-center gap-1 py-2 {{ is_current || is_parent ? 'text-indigo-600' : 'text-slate-700 hover:text-slate-900' }}"{{ if is_current }} aria-current="page"{{ /if }}>
+                    {{ title }}
+                    {{ if badge }}<span class="rounded-full bg-indigo-100 px-1.5 text-[10px] uppercase text-indigo-700">{{ badge }}</span>{{ /if }}
+                </a>
+                {{ if children }}
+                    <ul class="invisible absolute left-0 top-full w-64 rounded-lg border border-slate-200 bg-white p-2 shadow-lg group-hover:visible">
+                        {{ children }}
+                            <li>
+                                <a href="{{ url }}" class="block rounded px-3 py-2 {{ is_current || is_parent ? 'bg-indigo-50 text-indigo-700' : 'hover:bg-slate-50' }}">
+                                    <span class="flex items-center gap-2">{{ partial:components/icon :name="icon" class="h-4 w-4" }}{{ title }}</span>
+                                </a>
+                                {{ if children }}
+                                    <ul class="ml-6 border-l border-slate-100 pl-2 text-xs">
+                                        {{ children }}
+                                            <li><a href="{{ url }}" class="block px-2 py-1 {{ is_current ? 'font-semibold text-indigo-700' : 'text-slate-600' }}">{{ title }}</a></li>
+                                        {{ /children }}
+                                    </ul>
+                                {{ /if }}
+                            </li>
+                        {{ /children }}
+                    </ul>
+                {{ /if }}
+            </li>
+        {{ /nav:main }}
+    </ul>
+</nav>

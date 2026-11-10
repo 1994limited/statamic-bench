@@ -1,0 +1,13 @@
+{{ partial:components/section block="faq" :heading="heading" tone="muted" }}
+    <div class="mx-auto max-w-3xl divide-y divide-slate-200">
+        {{ questions }}
+            <details class="group py-4"{{ if first }} open{{ /if }}>
+                <summary class="flex cursor-pointer items-center justify-between font-semibold">
+                    <span>{{ index + 1 }}. {{ question }}</span>
+                    <span class="text-slate-400 group-open:rotate-45">+</span>
+                </summary>
+                <div class="prose prose-slate mt-3 text-sm">{{ answer }}</div>
+            </details>
+        {{ /questions }}
+    </div>
+{{ /partial:components/section }}

@@ -1,0 +1,11 @@
+{{ partial:components/page_header eyebrow="What's on" }}
+<div class="mx-auto max-w-4xl px-4 py-12 lg:px-8">
+    {{ collection:events paginate="15" sort="date:desc" as="events" }}
+        <div class="space-y-4">
+            {{ events }}
+                {{ partial:components/card_event }}
+            {{ /events }}
+        </div>
+        {{ partial:components/pagination }}
+    {{ /collection:events }}
+</div>

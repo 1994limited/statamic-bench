@@ -1,0 +1,6 @@
+{{ if image }}
+    <figure class="{{ class ?? '' }}">
+        <img src="{{ image:url }}" alt="{{ image:alt ?? '' }}" width="{{ image:width }}" height="{{ image:height }}" loading="{{ eager ? 'eager' : 'lazy' }}" decoding="async" class="h-full w-full rounded-lg object-cover">
+        {{ if caption }}<figcaption class="mt-2 text-sm text-slate-500">{{ caption }}</figcaption>{{ /if }}
+    </figure>
+{{ /if }}

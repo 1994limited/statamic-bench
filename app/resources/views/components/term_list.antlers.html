@@ -1,0 +1,7 @@
+{{ if terms }}
+    <ul class="flex flex-wrap gap-1.5">
+        {{ terms }}
+            <li><a href="{{ url }}" class="rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-medium text-slate-700 hover:bg-slate-200">{{ title }}</a></li>
+        {{ /terms }}
+    </ul>
+{{ /if }}

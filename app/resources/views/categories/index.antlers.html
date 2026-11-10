@@ -1,0 +1,9 @@
+{{ partial:components/page_header heading="Categories" }}
+<ul class="mx-auto grid max-w-7xl gap-4 px-4 py-12 md:grid-cols-3 lg:px-8">
+    {{ taxonomy:categories sort="title" }}
+        <li class="rounded-xl border border-slate-200 p-5">
+            <a href="{{ url }}" class="font-semibold hover:text-indigo-600">{{ title }}</a>
+            <p class="mt-1 text-sm text-slate-600">{{ description | truncate(100, '…') }}</p>
+        </li>
+    {{ /taxonomy:categories }}
+</ul>

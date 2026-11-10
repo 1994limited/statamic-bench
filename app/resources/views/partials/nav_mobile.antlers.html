@@ -1,0 +1,14 @@
+<nav aria-label="Mobile" class="border-t border-slate-100 lg:hidden" hidden>
+    <ul class="divide-y divide-slate-100 px-4 text-sm">
+        {{ nav:main }}
+            <li class="py-2 depth-{{ depth }}">
+                <a href="{{ url }}" class="{{ is_current ? 'font-semibold' : '' }}">{{ title }}</a>
+                {{ if children }}
+                    <ul class="ml-4 mt-1 space-y-1 text-slate-600">
+                        {{ *recursive children* }}
+                    </ul>
+                {{ /if }}
+            </li>
+        {{ /nav:main }}
+    </ul>
+</nav>

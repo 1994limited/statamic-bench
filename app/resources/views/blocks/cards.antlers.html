@@ -1,0 +1,7 @@
+{{ partial:components/section block="cards" :heading="heading" }}
+    <div class="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
+        {{ items }}
+            {{ partial:components/card_article }}
+        {{ /items }}
+    </div>
+{{ /partial:components/section }}

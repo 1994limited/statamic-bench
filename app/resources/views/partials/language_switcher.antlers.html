@@ -1,0 +1,11 @@
+<ul class="flex items-center gap-2 text-xs uppercase">
+    {{ locales }}
+        <li>
+            {{ if current }}
+                <span class="font-bold text-slate-900">{{ locale:short }}</span>
+            {{ else }}
+                <a href="{{ url }}" hreflang="{{ locale:short }}" class="text-slate-500 hover:text-slate-900">{{ locale:short }}</a>
+            {{ /if }}
+        </li>
+    {{ /locales }}
+</ul>

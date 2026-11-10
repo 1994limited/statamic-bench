@@ -1,0 +1,11 @@
+{{ partial:components/section block="quote" tone="dark" }}
+    <figure class="mx-auto max-w-3xl text-center">
+        <blockquote class="text-2xl font-medium leading-relaxed">&ldquo;{{ quote }}&rdquo;</blockquote>
+        {{ if person }}
+            <figcaption class="mt-6 flex items-center justify-center gap-3 text-sm">
+                {{ if person:photo }}<img src="{{ person:photo:url }}" alt="" width="40" height="40" class="h-10 w-10 rounded-full object-cover">{{ /if }}
+                <span><a href="{{ person:url }}" class="font-semibold">{{ person:title }}</a>, {{ person:role }}</span>
+            </figcaption>
+        {{ /if }}
+    </figure>
+{{ /partial:components/section }}

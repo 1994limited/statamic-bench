@@ -1,0 +1,16 @@
+<section class="relative isolate overflow-hidden bg-slate-900 text-white" data-block="hero">
+    <div class="mx-auto grid max-w-7xl items-center gap-10 px-4 py-20 lg:grid-cols-2 lg:px-8 lg:py-28">
+        <div>
+            {{ partial:components/heading :text="heading" level="1" size="xl" }}
+            <p class="mt-6 max-w-xl text-lg text-slate-300">{{ text }}</p>
+            {{ if buttons }}
+                <div class="mt-8 flex flex-wrap gap-3">
+                    {{ buttons }}
+                        {{ partial:components/button :label="label" :url="link:url" :style="style" }}
+                    {{ /buttons }}
+                </div>
+            {{ /if }}
+        </div>
+        {{ partial:components/image :image="image" eager="true" class="aspect-video" }}
+    </div>
+</section>

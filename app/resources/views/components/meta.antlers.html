@@ -1,0 +1,10 @@
+<p class="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-500">
+    <span class="inline-flex items-center gap-1">{{ partial:components/icon name="calendar" class="h-3.5 w-3.5" }}<time datetime="{{ date format="Y-m-d" }}">{{ date format="j F Y" }}</time></span>
+    {{ if reading_time }}
+        <span class="inline-flex items-center gap-1">{{ partial:components/icon name="clock" class="h-3.5 w-3.5" }}{{ reading_time }} min read</span>
+    {{ /if }}
+    {{ if author }}
+        <span>By <a href="{{ author:url }}" class="font-medium text-slate-700 hover:underline">{{ author:title }}</a></span>
+    {{ /if }}
+    {{ if featured }}<span class="rounded bg-amber-100 px-1.5 py-0.5 font-medium text-amber-800">Featured</span>{{ /if }}
+</p>

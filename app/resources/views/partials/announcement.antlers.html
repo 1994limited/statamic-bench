@@ -1,0 +1,10 @@
+{{ if settings:announcement }}
+    <div class="bg-slate-900 px-4 py-2 text-center text-sm text-white">
+        <p class="mx-auto max-w-5xl">
+            {{ settings:announcement }}
+            {{ if settings:announcement_link }}
+                <a href="{{ settings:announcement_link:url }}" class="ml-2 font-semibold underline underline-offset-2">{{ settings:announcement_link:title }} &rarr;</a>
+            {{ /if }}
+        </p>
+    </div>
+{{ /if }}

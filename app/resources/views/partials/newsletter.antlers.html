@@ -1,0 +1,13 @@
+<section class="border-t border-slate-200 bg-slate-50">
+    <div class="mx-auto grid max-w-7xl gap-6 px-4 py-12 lg:grid-cols-2 lg:px-8">
+        <div>
+            {{ partial:components/heading level="2" text="Stay in the loop" size="lg" }}
+            <p class="mt-2 text-slate-600">{{ settings:tagline }}</p>
+        </div>
+        <form action="/newsletter" method="post" class="flex items-start gap-2">
+            <label for="newsletter-email" class="sr-only">Email address</label>
+            <input id="newsletter-email" type="email" name="email" required placeholder="you@example.com" class="w-full rounded-md border border-slate-300 px-4 py-2">
+            <button type="submit" class="rounded-md bg-indigo-600 px-5 py-2 font-semibold text-white hover:bg-indigo-700">Subscribe</button>
+        </form>
+    </div>
+</section>

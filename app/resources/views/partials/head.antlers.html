@@ -1,0 +1,12 @@
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{ seo_title ?? title }} | {{ settings:site_name }}</title>
+{{ partial:partials/seo }}
+<link rel="canonical" href="{{ permalink }}">
+{{ locales }}
+    <link rel="alternate" hreflang="{{ locale:short }}" href="{{ permalink }}">
+{{ /locales }}
+<link rel="preconnect" href="https://fonts.example.com" crossorigin>
+<link rel="stylesheet" href="/build/app.css">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<meta name="theme-color" content="#0f172a">

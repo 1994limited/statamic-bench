@@ -1,0 +1,21 @@
+{{ partial:components/page_header eyebrow="Team" :intro="role" }}
+<div class="mx-auto grid max-w-5xl gap-10 px-4 py-12 lg:grid-cols-3 lg:px-8">
+    <aside>
+        {{ partial:components/image :image="photo" class="aspect-square" }}
+        <ul class="mt-4 space-y-1 text-sm">
+            {{ socials }}<li><a href="{{ url }}" rel="me noopener" class="text-indigo-600 hover:underline">{{ network | title }}</a></li>{{ /socials }}
+        </ul>
+    </aside>
+    <div class="lg:col-span-2">
+        <div class="prose prose-slate">{{ bio }}</div>
+        <h2 class="mt-10 text-xl font-bold">Articles by {{ title }}</h2>
+        <ul class="mt-4 divide-y divide-slate-200 text-sm">
+            {{ collection:articles :author:is="id" limit="10" sort="date:desc" }}
+                <li class="flex items-center justify-between py-2">
+                    <a href="{{ url }}" class="hover:text-indigo-600">{{ title }}</a>
+                    <time class="text-xs text-slate-500" datetime="{{ date format="Y-m-d" }}">{{ date format="j M Y" }}</time>
+                </li>
+            {{ /collection:articles }}
+        </ul>
+    </div>
+</div>

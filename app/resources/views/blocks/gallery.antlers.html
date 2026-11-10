@@ -1,0 +1,11 @@
+{{ partial:components/section block="gallery" :heading="heading" }}
+    <ul class="grid grid-cols-2 gap-4 md:grid-cols-4">
+        {{ images }}
+            <li class="{{ first ? 'col-span-2 row-span-2' : '' }}">
+                <a href="{{ url }}" class="block overflow-hidden rounded-lg bg-slate-100">
+                    <img src="{{ url }}" alt="{{ alt }}" width="{{ width }}" height="{{ height }}" loading="lazy" class="h-full w-full object-cover">
+                </a>
+            </li>
+        {{ /images }}
+    </ul>
+{{ /partial:components/section }}

@@ -1,0 +1,10 @@
+{{ partial:components/section block="stats" :heading="heading" }}
+    <dl class="grid gap-8 sm:grid-cols-2 lg:grid-cols-4">
+        {{ stats }}
+            <div class="rounded-xl border border-slate-200 p-6 text-center">
+                <dd class="text-4xl font-bold text-indigo-600">{{ value | format_number }}</dd>
+                <dt class="mt-2 text-sm text-slate-600">{{ label }}</dt>
+            </div>
+        {{ /stats }}
+    </dl>
+{{ /partial:components/section }}

@@ -1,0 +1,12 @@
+{{ partial:components/page_header eyebrow="Shop" }}
+<div class="mx-auto max-w-7xl px-4 py-12 lg:px-8">
+    {{ collection:products paginate="24" sort="title:asc" as="items" }}
+        <p class="mb-6 text-sm text-slate-500">Showing {{ items | count }} of {{ total_results }} products</p>
+        <div class="grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
+            {{ items }}
+                {{ partial:components/card_product }}
+            {{ /items }}
+        </div>
+        {{ partial:components/pagination }}
+    {{ /collection:products }}
+</div>

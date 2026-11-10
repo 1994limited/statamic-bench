@@ -1,0 +1,9 @@
+{{ partial:components/section block="text_image" :tone="flip ? 'muted' : ''" }}
+    <div class="grid items-center gap-10 lg:grid-cols-2">
+        <div class="{{ flip ? 'lg:order-2' : '' }}">
+            {{ partial:components/heading :text="heading" level="2" size="lg" }}
+            <div class="prose prose-slate mt-4">{{ body }}</div>
+        </div>
+        {{ partial:components/image :image="image" class="aspect-[4/3]" }}
+    </div>
+{{ /partial:components/section }}

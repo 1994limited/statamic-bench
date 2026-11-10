@@ -1,0 +1,13 @@
+{{ if specs }}
+    <table class="mt-8 w-full text-left text-sm">
+        <caption class="mb-2 text-left font-semibold">Specifications</caption>
+        <tbody class="divide-y divide-slate-200">
+            {{ specs }}
+                <tr class="{{ highlight ? 'bg-amber-50 font-medium' : '' }}">
+                    <th scope="row" class="py-2 pr-4 font-normal text-slate-500">{{ label }}</th>
+                    <td class="py-2">{{ value | ucfirst }}</td>
+                </tr>
+            {{ /specs }}
+        </tbody>
+    </table>
+{{ /if }}

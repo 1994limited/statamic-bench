@@ -1,0 +1,9 @@
+<section class="bg-indigo-600 text-white" data-block="cta">
+    <div class="mx-auto flex max-w-7xl flex-col items-start justify-between gap-6 px-4 py-14 lg:flex-row lg:items-center lg:px-8">
+        <div>
+            <h2 class="text-2xl font-bold lg:text-3xl">{{ heading }}</h2>
+            <p class="mt-2 max-w-xl text-indigo-100">{{ text }}</p>
+        </div>
+        {{ partial:components/button :label="button_label" :url="button_link:url" style="secondary" }}
+    </div>
+</section>

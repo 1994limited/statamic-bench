@@ -1,0 +1,18 @@
+<header class="sticky top-0 z-40 border-b border-slate-200 bg-white/90 backdrop-blur">
+    <div class="mx-auto flex max-w-7xl items-center justify-between gap-8 px-4 py-4 lg:px-8">
+        <a href="{{ site:url }}" class="flex items-center gap-2 text-lg font-bold tracking-tight">
+            {{ partial:components/icon name="logo" class="h-6 w-6" }}
+            <span>{{ settings:site_name }}</span>
+        </a>
+        {{ partial:partials/nav_main }}
+        <div class="flex items-center gap-4">
+            {{ partial:partials/language_switcher }}
+            <form action="/articles" method="get" role="search" class="hidden lg:block">
+                <label class="sr-only" for="q">Search</label>
+                <input id="q" name="q" type="search" value="{{ get:q | sanitize }}" placeholder="Search" class="w-40 rounded-full border border-slate-300 px-4 py-1.5 text-sm">
+            </form>
+            {{ partial:components/button label="Contact" url="/contact" style="primary" size="sm" }}
+        </div>
+    </div>
+    {{ partial:partials/nav_mobile }}
+</header>

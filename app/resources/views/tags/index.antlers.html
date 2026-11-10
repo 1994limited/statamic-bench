@@ -1,0 +1,6 @@
+{{ partial:components/page_header heading="Tags" }}
+<ul class="mx-auto flex max-w-7xl flex-wrap gap-2 px-4 py-12 lg:px-8">
+    {{ taxonomy:tags sort="title" }}
+        <li><a href="{{ url }}" class="rounded-full bg-slate-100 px-3 py-1 text-sm hover:bg-slate-200">{{ title }}</a></li>
+    {{ /taxonomy:tags }}
+</ul>

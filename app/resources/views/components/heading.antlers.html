@@ -1,0 +1,3 @@
+{{ if text }}
+    <h{{ level ?? '2' }} class="font-bold tracking-tight text-slate-900 {{ size == 'xl' ? 'text-4xl lg:text-5xl' : (size == 'lg' ? 'text-2xl lg:text-3xl' : 'text-xl') }}">{{ text }}</h{{ level ?? '2' }}>
+{{ /if }}

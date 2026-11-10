@@ -1,0 +1,34 @@
+{{ paginate }}
+    {{ if total_pages > 1 }}
+        <nav aria-label="Pagination" class="mt-10 flex items-center justify-between border-t border-slate-200 pt-6 text-sm">
+            {{ if prev_page }}
+                <a href="{{ prev_page }}" rel="prev" class="font-medium text-indigo-600 hover:underline">&larr; Newer</a>
+            {{ else }}
+                <span class="text-slate-300">&larr; Newer</span>
+            {{ /if }}
+            <ol class="hidden items-center gap-1 md:flex">
+                {{ links:segments:first }}
+                    <li><a href="{{ url }}" class="rounded px-3 py-1 {{ page == current_page ? 'bg-indigo-600 text-white' : 'hover:bg-slate-100' }}">{{ page }}</a></li>
+                {{ /links:segments:first }}
+                {{ if links:segments:slider }}
+                    <li class="px-1 text-slate-400">&hellip;</li>
+                    {{ links:segments:slider }}
+                        <li><a href="{{ url }}" class="rounded px-3 py-1 {{ page == current_page ? 'bg-indigo-600 text-white' : 'hover:bg-slate-100' }}">{{ page }}</a></li>
+                    {{ /links:segments:slider }}
+                {{ /if }}
+                {{ if links:segments:last }}
+                    <li class="px-1 text-slate-400">&hellip;</li>
+                    {{ links:segments:last }}
+                        <li><a href="{{ url }}" class="rounded px-3 py-1 hover:bg-slate-100">{{ page }}</a></li>
+                    {{ /links:segments:last }}
+                {{ /if }}
+            </ol>
+            <p class="text-slate-500 md:hidden">Page {{ current_page }} of {{ total_pages }}</p>
+            {{ if next_page }}
+                <a href="{{ next_page }}" rel="next" class="font-medium text-indigo-600 hover:underline">Older &rarr;</a>
+            {{ else }}
+                <span class="text-slate-300">Older &rarr;</span>
+            {{ /if }}
+        </nav>
+    {{ /if }}
+{{ /paginate }}

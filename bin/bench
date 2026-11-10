@@ -1,0 +1,720 @@
+#!/usr/bin/env php
+<?php
+
+/**
+ * statamic-bench: build a Statamic app with a generated content site, then
+ * time it, profile it, and compare one version of statamic/cms with another.
+ *
+ * Run `bin/bench help` for the commands.
+ */
+
+const ROOT = __DIR__.'/..';
+const TARGETS = ROOT.'/targets.noindex';   // .noindex keeps Spotlight out of the apps on macOS
+const RESULTS = ROOT.'/results';
+
+$argv = $_SERVER['argv'];
+array_shift($argv);
+$command = array_shift($argv) ?? 'help';
+[$args, $opts] = parse_args($argv);
+
+try {
+    match ($command) {
+        'setup' => cmd_setup($args, $opts),
+        'sync' => cmd_sync($args),
+        'generate' => cmd_generate($args, $opts),
+        'run' => cmd_run($args, $opts),
+        'compare' => cmd_compare($args, $opts),
+        'check' => cmd_check($args, $opts),
+        'verify' => cmd_verify($args, $opts),
+        'octane' => cmd_octane($args, $opts),
+        'profile' => cmd_profile($args, $opts),
+        'list' => cmd_list(),
+        'help', '--help', '-h' => print (HELP),
+        default => fail("unknown command \"$command\" (try: bin/bench help)"),
+    };
+} catch (BenchError $e) {
+    fwrite(STDERR, "bench: {$e->getMessage()}\n");
+    exit(1);
+}
+
+const HELP = <<<'TXT'
+statamic-bench
+
+  bin/bench setup <target> [--cms=6.40.0] [--src=/path/to/cms] [--repo=URL] [--patch=file.patch]
+                           [--skeleton=VERSION] [--size=small] [--seed=1001]
+      Build an app in targets.noindex/<target>: the statamic/statamic skeleton, statamic/cms at
+      --cms (any Composer constraint, default the latest release), then the bench site on top.
+      --src copies a local statamic/cms checkout over the installed package (see `sync`);
+      --repo adds a Git repository to install --cms from (a fork: --repo=URL --cms=dev-branch);
+      --patch applies a patch file to the installed package. --patch can be repeated.
+
+  bin/bench sync <target>
+      Copy the --src checkout over the installed package again, after you've changed it.
+
+  bin/bench generate <target> [--size=micro|small|medium|large] [--seed=1001] [--articles=N ...]
+      Write the content again at another size. Every target you compare needs the same content.
+
+  bin/bench run <target> [--r=10] [--only=home,article] [--skip=build,cold,save] [--out=file.json]
+      Time the scenarios: the Stache build, a first request with nothing cached, each page with
+      everything warm (one PHP process per request, like PHP-FPM), and entry saves.
+
+  bin/bench compare <a> <b> [--rounds=3] [--r=10] [--only=...] [--skip=...]
+      Run both targets in alternating order for some rounds and print the difference.
+
+  bin/bench check <a> <b>
+      Render every page in both targets and report any difference in the HTML, then compare
+      what the Stache holds (every entry's URL, status, dates and data).
+
+  bin/bench verify <target>
+      Run behaviour checks that have caught real bugs in performance changes: change tracking,
+      localised entries, URLs, and what a second process sees after a save.
+
+  bin/bench octane <target> [<other>] [--r=20] [--only=...]
+      Serve the pages from one long-lived Laravel Octane worker: time per request, memory
+      growth, and whether the HTML matches a fresh process, including after another process
+      saves an entry. With two targets, also whether both workers give the same HTML.
+
+  bin/bench profile <target> <scenario> [--top=30] [--keep] [--callees=Name]
+      Profile one scenario (a page name, or "build") with Xdebug and print where the time goes.
+
+  bin/bench list
+      The targets you have and the scenarios they can run.
+
+Environment: BENCH_PHP (PHP binary, default "php"), XDEBUG_SO (path to xdebug.so for `profile`).
+
+TXT;
+
+// ===================================================================== setup
+
+function cmd_setup(array $args, array $opts): void
+{
+    $name = $args[0] ?? fail('setup needs a target name');
+    preg_match('/^[a-z0-9][a-z0-9._-]*$/i', $name) || fail('target names are letters, numbers, dots, dashes');
+    $dir = TARGETS."/$name";
+    is_dir($dir) && fail("target $name already exists (delete targets.noindex/$name to rebuild it)");
+    @mkdir(TARGETS, 0777, true);
+
+    $skeleton = isset($opts['skeleton']) ? 'statamic/statamic:'.$opts['skeleton'] : 'statamic/statamic';
+    say("creating $skeleton");
+    sh(['composer', 'create-project', $skeleton, $dir, '--no-install', '--no-scripts', '--no-interaction', '--quiet']);
+    copy(ROOT.'/app/.env', "$dir/.env");
+
+    // dev tools that hook into requests would skew the timings
+    sh(['composer', 'remove', '--dev', '--no-update', '--no-interaction', '--quiet',
+        'fruitcake/laravel-debugbar', 'barryvdh/laravel-debugbar', 'laravel/pail', 'laravel/sail', 'laravel/pint',
+        'nunomaduro/collision', 'spatie/laravel-ignition', 'spatie/laravel-error-solutions'], $dir, false);
+    if (isset($opts['repo'])) {
+        sh(['composer', 'config', 'repositories.cms', 'vcs', $opts['repo']], $dir);
+    }
+    if (isset($opts['cms'])) {
+        sh(['composer', 'require', '--no-update', '--no-interaction', '--quiet', 'statamic/cms:'.$opts['cms']], $dir);
+    }
+    say('installing packages');
+    sh(['composer', 'update', '--no-interaction', '--prefer-dist', '--quiet'], $dir);
+
+    say('adding the bench site');
+    foreach (['content', 'resources/views', 'resources/blueprints', 'resources/fieldsets', 'users'] as $path) {
+        rrmdir("$dir/$path");
+    }
+    rcopy(ROOT.'/app', $dir);
+    // two sites (and Pro, which multi-site needs; it's switched on in .env)
+    edit_config("$dir/config/statamic/system.php", "/'multisite' => (true|false),/", "'multisite' => true,");
+
+    $target = ['name' => $name, 'cms' => $opts['cms'] ?? 'latest', 'repo' => $opts['repo'] ?? null, 'src' => null, 'patches' => []];
+    if (isset($opts['src'])) {
+        $target['src'] = realpath($opts['src']) ?: fail("--src {$opts['src']} doesn't exist");
+    }
+    save_target($dir, $target);
+    if ($target['src']) {
+        sync_src($dir, $target);
+    }
+    foreach ((array) ($opts['patch'] ?? []) as $patch) {
+        $patch = realpath($patch) ?: fail("patch $patch doesn't exist");
+        say('applying '.basename($patch));
+        sh(['patch', '-p1', '--forward', '--silent', '-i', $patch], "$dir/vendor/statamic/cms");
+        $target['patches'][] = $patch;
+    }
+    save_target($dir, $target);
+
+    cmd_generate([$name], array_intersect_key($opts, ['size' => 1, 'seed' => 1]));
+    say("ready: $name is statamic/cms ".target_version($dir));
+}
+
+function cmd_sync(array $args): void
+{
+    $dir = target_dir($args[0] ?? fail('sync needs a target name'));
+    $target = load_target($dir);
+    $target['src'] || fail("{$target['name']} wasn't set up with --src");
+    sync_src($dir, $target);
+}
+
+/** Copy a statamic/cms checkout's code over the installed package (built CP assets are left alone). */
+function sync_src(string $dir, array $target): void
+{
+    $src = $target['src'];
+    is_dir("$src/src") || fail("$src doesn't look like a statamic/cms checkout");
+    say("copying $src");
+    foreach (['src', 'config', 'routes', 'lang', 'resources/views', 'resources/users'] as $path) {
+        if (is_dir("$src/$path")) {
+            sh(['rsync', '-a', '--delete', "$src/$path/", "$dir/vendor/statamic/cms/$path/"]);
+        }
+    }
+    rrmdir("$dir/storage/framework/opcache");
+    sh([...php($dir), 'artisan', 'package:discover', '--quiet'], $dir, false);
+}
+
+function cmd_generate(array $args, array $opts): void
+{
+    $dir = target_dir($args[0] ?? fail('generate needs a target name'));
+    $flags = [];
+    foreach (['size', 'seed', 'articles', 'products', 'events', 'people', 'tags'] as $k) {
+        if (isset($opts[$k])) {
+            $flags[] = "--$k={$opts[$k]}";
+        }
+    }
+    sh([...php($dir), 'bench/generate.php', ...$flags], $dir);
+    rrmdir("$dir/storage/framework/views");
+    @mkdir("$dir/storage/framework/views", 0777, true);
+}
+
+function cmd_list(): void
+{
+    foreach (glob(TARGETS.'/*', GLOB_ONLYDIR) as $dir) {
+        $t = load_target($dir);
+        $m = manifest($dir);
+        printf("%-16s statamic/cms %-12s %s%s  content: %s (seed %d)\n", $t['name'], target_version($dir),
+            $t['src'] ? "src {$t['src']} " : '', $t['patches'] ? count($t['patches']).' patch(es)' : '', $m['config']['size'], $m['config']['seed']);
+    }
+    if (isset($m)) {
+        echo "\nscenarios: build, cold, ".implode(', ', array_keys($m['pages'])).", save\n";
+    }
+}
+
+// ======================================================================= run
+
+function cmd_run(array $args, array $opts): void
+{
+    $dir = target_dir($args[0] ?? fail('run needs a target name'));
+    $result = run_target($dir, $opts);
+    print_table(['scenario', 'median ms', 'min', 'max', 'boot ms', 'peak MB'], array_map(
+        fn ($name, $s) => [$name, ms(median($s['ms'])), ms(min($s['ms'])), ms(max($s['ms'])), isset($s['boot_ms']) ? ms(median($s['boot_ms'])) : '', sprintf('%.1f', max($s['peak_mem_mb']))],
+        array_keys($result['scenarios']), $result['scenarios']
+    ));
+    $out = $opts['out'] ?? RESULTS.'/'.basename($dir).'-'.date('Ymd-His').'.json';
+    @mkdir(dirname($out), 0777, true);
+    file_put_contents($out, json_encode($result, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES)."\n");
+    say("wrote $out");
+}
+
+/** Every sample of every scenario for one target. */
+function run_target(string $dir, array $opts, bool $quiet = false): array
+{
+    $m = manifest($dir);
+    $r = (int) ($opts['r'] ?? 10);
+    $only = isset($opts['only']) ? explode(',', $opts['only']) : null;
+    $skip = isset($opts['skip']) ? explode(',', $opts['skip']) : [];
+    $wanted = fn (string $name) => ! in_array($name, $skip) && (! $only || in_array($name, $only));
+    $log = fn (string $s) => $quiet || fwrite(STDERR, $s);
+    $scenarios = [];
+    $add = function (string $name, array $sample) use (&$scenarios) {
+        foreach (['ms', 'boot_ms', 'peak_mem_mb'] as $k) {
+            if (isset($sample[$k])) {
+                $scenarios[$name][$k][] = $sample[$k];
+            }
+        }
+    };
+
+    if ($wanted('build')) {
+        for ($i = 0; $i < min(3, $r); $i++) {
+            $add('build', child($dir, ['bench/build.php']));
+            $log('.');
+        }
+    }
+    if ($wanted('cold')) {
+        // nothing cached at all: the request also builds the Stache and compiles the views
+        for ($i = 0; $i < min(2, $r); $i++) {
+            $add('cold', child($dir, ['bench/request.php', '--clear', '--url=/', '--expect=200']));
+            $log('.');
+        }
+    }
+
+    $pages = array_filter($m['pages'], fn ($name) => $wanted($name), ARRAY_FILTER_USE_KEY);
+    if ($pages) {
+        child($dir, ['bench/build.php']);
+        foreach ($pages as [$url, $status]) {
+            child($dir, ['bench/request.php', "--url=$url", "--expect=$status"]);   // compiles views, fills caches
+        }
+        // round-robin, so drift in the machine's load spreads over every page
+        for ($i = 0; $i < $r; $i++) {
+            foreach ($pages as $name => [$url, $status]) {
+                $add($name, child($dir, ['bench/request.php', "--url=$url", "--expect=$status"]));
+            }
+            $log('.');
+        }
+    }
+    if ($wanted('save')) {
+        for ($i = 0; $i < min(3, $r); $i++) {
+            $add('save', child($dir, ['bench/save.php']));
+            $log('.');
+        }
+    }
+    $log("\n");
+
+    return [
+        'target' => load_target($dir),
+        'statamic' => target_version($dir),
+        'php' => trim(shell_exec(escapeshellarg(php_binary()).' -r "echo PHP_VERSION;"')),
+        'fixture' => $m['config'],
+        'counts' => $m['counts'],
+        'r' => $r,
+        'scenarios' => $scenarios,
+    ];
+}
+
+function cmd_compare(array $args, array $opts): void
+{
+    count($args) === 2 || fail('compare needs two target names');
+    [$a, $b] = array_map('target_dir', $args);
+    same_fixture($a, $b);
+    $rounds = (int) ($opts['rounds'] ?? 3);
+    $samples = [];
+    for ($round = 0; $round < $rounds; $round++) {
+        foreach ($round % 2 ? [$b, $a] : [$a, $b] as $dir) {
+            fwrite(STDERR, sprintf('round %d/%d %-12s ', $round + 1, $rounds, basename($dir)));
+            foreach (run_target($dir, $opts)['scenarios'] as $name => $s) {
+                foreach ($s as $k => $values) {
+                    $samples[$name][$dir][$k] = [...($samples[$name][$dir][$k] ?? []), ...$values];
+                }
+            }
+        }
+    }
+
+    $rows = [];
+    foreach ($samples as $name => $s) {
+        [$ma, $mb] = [median($s[$a]['ms']), median($s[$b]['ms'])];
+        $noise = 100 * (mad($s[$a]['ms']) / $ma + mad($s[$b]['ms']) / $mb);
+        $diff = 100 * ($mb - $ma) / $ma;
+        [$pa, $pb] = [max($s[$a]['peak_mem_mb']), max($s[$b]['peak_mem_mb'])];
+        $rows[] = [$name, ms($ma), ms($mb), sprintf('%+.1f%%', $diff), sprintf('±%.1f%%', $noise), abs($diff) > max(2.0, 2 * $noise) ? ($diff < 0 ? 'faster' : 'SLOWER') : 'same',
+            sprintf('%.1f', $pa), sprintf('%.1f', $pb), sprintf('%+.1f%%', 100 * ($pb - $pa) / $pa)];
+    }
+    echo "\n";
+    print_table(['scenario', basename($a).' ms', basename($b).' ms', 'time', 'noise', '', basename($a).' MB', basename($b).' MB', 'memory'], $rows);
+    echo "\ntime = median of every sample; noise = spread of the samples (median absolute deviation, both targets);\na difference under twice the noise (or under 2%) is reported as \"same\".\n";
+
+    $out = $opts['out'] ?? RESULTS.'/compare-'.basename($a).'-'.basename($b).'-'.date('Ymd-His').'.json';
+    @mkdir(dirname($out), 0777, true);
+    file_put_contents($out, json_encode(['a' => load_target($a), 'b' => load_target($b), 'rounds' => $rounds, 'fixture' => manifest($a)['config'],
+        'samples' => array_map(fn ($s) => [basename($a) => $s[$a], basename($b) => $s[$b]], $samples)], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES)."\n");
+    say("wrote $out");
+}
+
+// ============================================================ check, verify
+
+function cmd_check(array $args, array $opts): void
+{
+    count($args) === 2 || fail('check needs two target names');
+    [$a, $b] = array_map('target_dir', $args);
+    same_fixture($a, $b);
+    $out = RESULTS.'/check';
+    $different = 0;
+    foreach ([$a, $b] as $dir) {
+        rrmdir("$out/".basename($dir));
+        @mkdir("$out/".basename($dir), 0777, true);
+        child($dir, ['bench/build.php']);
+        foreach (manifest($dir)['pages'] as $name => [$url, $status]) {
+            child($dir, ['bench/request.php', "--url=$url", "--expect=$status", "--html=$out/".basename($dir)."/$name.html"]);
+        }
+        file_put_contents("$out/".basename($dir).'/stache.json', json_encode(child($dir, ['bench/dump.php']), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+    }
+    foreach ([...array_map(fn ($n) => "$n.html", array_keys(manifest($a)['pages'])), 'stache.json'] as $file) {
+        [$fa, $fb] = ["$out/".basename($a)."/$file", "$out/".basename($b)."/$file"];
+        $same = md5_file($fa) === md5_file($fb);
+        printf("  %-28s %s\n", $file, $same ? 'identical' : 'DIFFERENT');
+        if (! $same) {
+            $different++;
+            echo implode("\n", array_slice(explode("\n", (string) shell_exec('diff -u '.escapeshellarg($fa).' '.escapeshellarg($fb))), 0, 14))."\n";
+        }
+    }
+    echo $different ? "\n$different file(s) differ; both versions are in results/check/\n" : "\nevery page and the Stache contents are identical\n";
+    exit($different ? 1 : 0);
+}
+
+function cmd_verify(array $args, array $opts): void
+{
+    $dir = target_dir($args[0] ?? fail('verify needs a target name'));
+    child($dir, ['bench/build.php']);
+    $result = child($dir, ['bench/checks.php'], false);
+    $failed = 0;
+    foreach ($result['checks'] ?? [] as $check) {
+        printf("  %s  %s%s\n", $check['pass'] ? 'pass' : 'FAIL', $check['name'], $check['pass'] ? '' : "\n        ".$check['detail']);
+        $failed += $check['pass'] ? 0 : 1;
+    }
+    isset($result['checks']) || fail('the checks did not finish: '.json_encode($result));
+    $moved = moved_directory_check($dir);
+    printf("  %s  %s%s\n", $moved === null ? 'pass' : 'FAIL', 'pages render the same after the app\'s directory moves (a zero-downtime deploy)', $moved === null ? '' : "\n        $moved");
+    $failed += $moved === null ? 0 : 1;
+    $result['checks'][] = ['name' => 'moved directory', 'pass' => $moved === null];
+    echo $failed ? "\n$failed check(s) failed\n" : "\nall ".count($result['checks'])." checks passed\n";
+    exit($failed ? 1 : 0);
+}
+
+/**
+ * Zero-downtime deploys put each release in a new directory, so the Stache and
+ * the caches were built under a path that no longer exists. Move the app,
+ * render, move it back.
+ */
+function moved_directory_check(string $dir): ?string
+{
+    $out = RESULTS.'/check';
+    @mkdir($out, 0777, true);
+    $pages = array_intersect_key(manifest($dir)['pages'], ['home' => 1, 'article' => 1, 'page_french' => 1]);
+    $moved = $dir.'-moved';
+    $render = function (string $where, string $suffix) use ($pages, $out) {
+        foreach ($pages as $name => [$url, $status]) {
+            $result = child($where, ['bench/request.php', "--url=$url", "--html=$out/moved-$name-$suffix.html"], false);
+            if (($result['status'] ?? null) !== $status) {
+                return "$name returned ".json_encode($result['status'] ?? $result['error'] ?? null).' after the move';
+            }
+        }
+
+        return null;
+    };
+    $render($dir, 'before');
+    rename($dir, $moved) || fail("couldn't move $dir");
+    try {
+        if ($problem = $render($moved, 'after')) {
+            return $problem;
+        }
+    } finally {
+        rename($moved, $dir);
+        rrmdir("$dir/storage/framework/opcache");
+    }
+    foreach ($pages as $name => $_) {
+        if (md5_file("$out/moved-$name-before.html") !== md5_file("$out/moved-$name-after.html")) {
+            return "$name rendered differently after the move (results/check/moved-$name-*.html)";
+        }
+    }
+
+    return null;
+}
+
+function cmd_octane(array $args, array $opts): void
+{
+    $dirs = array_map('target_dir', $args ?: fail('octane needs a target name (or two, to compare them)'));
+    count($dirs) <= 2 || fail('octane takes one or two targets');
+    count($dirs) === 2 && same_fixture(...$dirs);
+    $results = array_map(fn ($dir) => octane_target($dir, $opts), $dirs);
+    $names = array_map('basename', $dirs);
+    $failed = 0;
+
+    if (count($dirs) === 1) {
+        [$result] = $results;
+        print_table(['page', 'first ms', 'median ms', 'fresh process ms', 'same HTML as a fresh process'], array_map(
+            fn ($name, $p) => [$name, ms($p['first_ms']), ms($p['median_ms']), ms($p['fresh_ms']), $p['same_html'] ? 'yes' : 'NO: '.$p['detail']],
+            array_keys($result['pages']), $result['pages']
+        ));
+        $failed += count(array_filter($result['pages'], fn ($p) => ! $p['same_html']));
+    } else {
+        // the question with two targets: does the second behave like the first inside a worker?
+        [$a, $b] = $results;
+        $rows = [];
+        foreach ($a['pages'] as $name => $p) {
+            $q = $b['pages'][$name];
+            $same = array_map(fn ($when) => md5_file(RESULTS."/octane/{$names[0]}/$name.worker-$when.html") === md5_file(RESULTS."/octane/{$names[1]}/$name.worker-$when.html"), ['first', 'last']);
+            $failed += $same === [true, true] ? 0 : 1;
+            $rows[] = [$name, ms($p['median_ms']), ms($q['median_ms']), sprintf('%+.1f%%', 100 * ($q['median_ms'] - $p['median_ms']) / $p['median_ms']),
+                $p['same_html'] ? 'yes' : 'no', $q['same_html'] ? 'yes' : 'no', $same === [true, true] ? 'yes' : 'NO ('.($same[0] ? 'last' : 'first').' request)'];
+        }
+        print_table(['page', "{$names[0]} ms", "{$names[1]} ms", 'time', "{$names[0]} = fresh", "{$names[1]} = fresh", 'workers give the same HTML'], $rows);
+        echo "\n\"= fresh\": the worker's HTML matches a fresh PHP process on that target.\n";
+    }
+
+    foreach ($results as $i => $result) {
+        printf("\n%s: memory after %d requests %.1f MB, after %d requests %.1f MB (%+.2f MB)\n", $names[$i], $result['memory']['early_requests'], $result['memory']['early_mb'],
+            $result['memory']['requests'], $result['memory']['late_mb'], $result['memory']['late_mb'] - $result['memory']['early_mb']);
+        foreach ($result['checks'] as $n => $check) {
+            printf("  %s  %s%s\n", $check['pass'] ? 'pass' : 'FAIL', $check['name'], $check['pass'] ? '' : "\n        ".$check['detail']);
+            // with two targets, only a check the first passes and the second fails counts against it
+            $failed += $check['pass'] || ($i === 1 && ! $results[0]['checks'][$n]['pass']) || ($i === 0 && count($dirs) === 2) ? 0 : 1;
+        }
+    }
+    $out = RESULTS.'/octane-'.implode('-', $names).'-'.date('Ymd-His').'.json';
+    file_put_contents($out, json_encode(array_combine($names, $results), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES)."\n");
+    say("wrote $out");
+    exit($failed ? 1 : 0);
+}
+
+function octane_target(string $dir, array $opts): array
+{
+    if (! is_dir("$dir/vendor/laravel/octane")) {
+        say('installing laravel/octane in '.basename($dir));
+        sh(['composer', 'require', 'laravel/octane', '--no-interaction', '--quiet'], $dir);
+        rrmdir("$dir/storage/framework/opcache");
+    }
+    child($dir, ['bench/build.php']);
+    $fresh = RESULTS.'/octane/'.basename($dir);
+    rrmdir($fresh);
+    @mkdir($fresh, 0777, true);
+    $freshMs = [];
+    say(basename($dir).': rendering each page in a fresh process, to compare against');
+    foreach (manifest($dir)['pages'] as $name => [$url, $status]) {
+        child($dir, ['bench/request.php', "--url=$url", "--expect=$status"]);
+        $freshMs[$name] = child($dir, ['bench/request.php', "--url=$url", "--expect=$status", "--html=$fresh/$name.html"])['ms'];
+    }
+    $flags = ["--fresh=$fresh", '--r='.(int) ($opts['r'] ?? 20)];
+    if (isset($opts['only'])) {
+        $flags[] = '--only='.$opts['only'];
+    }
+    say(basename($dir).': serving them from one Octane worker');
+    $result = child($dir, ['bench/worker.php', ...$flags], false);
+    isset($result['pages']) || fail('the worker did not finish: '.json_encode($result));
+    foreach ($result['pages'] as $name => &$page) {
+        $page['fresh_ms'] = $freshMs[$name];
+    }
+
+    return $result;
+}
+
+// =================================================================== profile
+
+function cmd_profile(array $args, array $opts): void
+{
+    $dir = target_dir($args[0] ?? fail('profile needs a target and a scenario'));
+    $scenario = $args[1] ?? fail('profile needs a scenario: a page name or "build"');
+    $m = manifest($dir);
+    if ($scenario === 'build') {
+        $script = ['bench/build.php'];
+        $root = 'bench_build';
+    } else {
+        isset($m['pages'][$scenario]) || fail("no scenario \"$scenario\" (try: bin/bench list)");
+        child($dir, ['bench/build.php']);
+        $script = ['bench/request.php', '--url='.$m['pages'][$scenario][0]];
+        child($dir, $script);
+        $root = 'bench_request';
+    }
+
+    $out = RESULTS.'/profiles';
+    @mkdir($out, 0777, true);
+    $name = basename($dir)."-$scenario";
+    @unlink("$out/$name.cachegrind.gz");
+    @unlink("$out/$name.cachegrind.gz.pickle");
+    say('profiling with Xdebug (several times slower than a normal run)');
+    $xdebug = xdebug_args();
+    // no opcache file cache here: Xdebug needs the code compiled in this process
+    sh([...php($dir, false), ...$xdebug, '-d', 'xdebug.mode=profile', '-d', 'xdebug.start_with_request=yes', '-d', "xdebug.output_dir=$out",
+        '-d', "xdebug.profiler_output_name=$name.cachegrind", '-d', 'xdebug.use_compression=1', ...$script], $dir);
+    is_file("$out/$name.cachegrind.gz") || fail('Xdebug wrote no profile');
+
+    $summary = ['python3', ROOT.'/tools/cachegrind_top.py', "$out/$name.cachegrind.gz", '--top', (string) ($opts['top'] ?? 30), '--root', $root];
+    if (isset($opts['callees'])) {
+        array_push($summary, '--callees', $opts['callees']);
+    }
+    passthru(implode(' ', array_map('escapeshellarg', $summary)).' | tee '.escapeshellarg("$out/$name.txt"));
+    if (! isset($opts['keep'])) {
+        unlink("$out/$name.cachegrind.gz");   // the parsed copy beside it still answers --callees
+    }
+    say("summary in results/profiles/$name.txt".(isset($opts['keep']) ? ", raw profile in results/profiles/$name.cachegrind.gz (open it in KCachegrind or qcachegrind)" : ''));
+}
+
+function xdebug_args(): array
+{
+    $php = php_binary();
+    if (trim((string) shell_exec(escapeshellarg($php).' -r "echo extension_loaded(\'xdebug\') ? 1 : 0;" 2>/dev/null')) === '1' && ! clean_ini()) {
+        return [];
+    }
+    $version = trim(shell_exec(escapeshellarg($php).' -n -r "echo PHP_MAJOR_VERSION.PHP_MINOR_VERSION;"'));
+    $candidates = array_filter([getenv('XDEBUG_SO') ?: null, "/Applications/Herd.app/Contents/Resources/xdebug/xdebug-$version-arm64.so",
+        "/Applications/Herd.app/Contents/Resources/xdebug/xdebug-$version-x86.so",
+        trim((string) shell_exec(escapeshellarg($php).' -n -r "echo ini_get(\'extension_dir\');"')).'/xdebug.so']);
+    foreach ($candidates as $so) {
+        if (is_file($so)) {
+            return ['-d', "zend_extension=$so"];
+        }
+    }
+    fail('Xdebug not found: install it, or set XDEBUG_SO=/path/to/xdebug.so');
+}
+
+// =================================================================== helpers
+
+final class BenchError extends RuntimeException {}
+
+function fail(string $message): never
+{
+    throw new BenchError($message);
+}
+
+function say(string $message): void
+{
+    fwrite(STDERR, "\033[1m==> $message\033[0m\n");
+}
+
+function parse_args(array $argv): array
+{
+    $args = $opts = [];
+    foreach ($argv as $arg) {
+        if (preg_match('/^--([a-z0-9-]+)(?:=(.*))?$/s', $arg, $m)) {
+            $value = $m[2] ?? true;
+            $opts[$m[1]] = isset($opts[$m[1]]) ? [...(array) $opts[$m[1]], $value] : $value;
+        } else {
+            $args[] = $arg;
+        }
+    }
+
+    return [$args, $opts];
+}
+
+function php_binary(): string
+{
+    return getenv('BENCH_PHP') ?: 'php';
+}
+
+/** Can PHP run the app with no php.ini at all? Then nothing on this machine's config can skew a run. */
+function clean_ini(): bool
+{
+    static $clean;
+
+    return $clean ??= trim((string) shell_exec(escapeshellarg(php_binary()).' -n -r "echo extension_loaded(\'mbstring\') && extension_loaded(\'dom\') && extension_loaded(\'fileinfo\') && extension_loaded(\'tokenizer\') && extension_loaded(\'ctype\') && extension_loaded(\'curl\') && extension_loaded(\'Zend OPcache\') ? 1 : 0;" 2>/dev/null')) === '1';
+}
+
+/** The PHP command every bench process runs under: production-like, the same for every target. */
+function php(string $dir, bool $fileCache = true): array
+{
+    $args = [php_binary(), ...(clean_ini() ? ['-n'] : []),
+        '-d', 'memory_limit=8G', '-d', 'auto_prepend_file=', '-d', 'display_errors=stderr', '-d', 'pcre.jit=1',
+        '-d', 'opcache.enable_cli=1', '-d', 'opcache.jit=disable', '-d', 'opcache.memory_consumption=256', '-d', 'opcache.max_accelerated_files=30000',
+        '-d', 'realpath_cache_size=4096K'];
+    if ($fileCache) {
+        // each process gets compiled code from disk, the way an FPM worker gets it from shared memory
+        @mkdir("$dir/storage/framework/opcache", 0777, true);
+        array_push($args, '-d', "opcache.file_cache=$dir/storage/framework/opcache");
+    }
+
+    return $args;
+}
+
+/** Run a bench script in its own PHP process and decode the JSON line it prints. */
+function child(string $dir, array $script, bool $strict = true): array
+{
+    $env = [...getenv(), 'BENCH_CHILD' => json_encode(php($dir))];
+    $proc = proc_open([...php($dir), ...$script], [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes, $dir, $env);
+    $out = stream_get_contents($pipes[1]);
+    $err = stream_get_contents($pipes[2]);
+    $code = proc_close($proc);
+    $lines = array_filter(explode("\n", trim($out)));
+    $data = json_decode((string) end($lines), true);
+    if ($strict && ($code !== 0 || ! is_array($data))) {
+        fail(implode(' ', $script).' failed in '.basename($dir)." (exit $code): ".trim(substr($err, 0, 700).' '.substr($out, -300)));
+    }
+
+    return is_array($data) ? $data : ['exit' => $code, 'error' => trim(substr($err, 0, 700).' '.substr($out, -300))];
+}
+
+function sh(array $command, ?string $cwd = null, bool $strict = true): void
+{
+    $proc = proc_open($command, [1 => STDERR, 2 => STDERR], $pipes, $cwd);
+    $code = proc_close($proc);
+    if ($strict && $code !== 0) {
+        fail(implode(' ', $command)." failed (exit $code)");
+    }
+}
+
+function target_dir(string $name): string
+{
+    $dir = TARGETS."/$name";
+    is_file("$dir/bench/target.json") || fail("no target \"$name\" (bin/bench setup $name)");
+
+    return $dir;
+}
+
+function load_target(string $dir): array
+{
+    return json_decode(file_get_contents("$dir/bench/target.json"), true);
+}
+
+function save_target(string $dir, array $target): void
+{
+    file_put_contents("$dir/bench/target.json", json_encode($target, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES)."\n");
+}
+
+function target_version(string $dir): string
+{
+    $installed = json_decode(file_get_contents("$dir/vendor/composer/installed.json"), true);
+    foreach ($installed['packages'] ?? $installed as $package) {
+        if ($package['name'] === 'statamic/cms') {
+            return ltrim($package['version'], 'v');
+        }
+    }
+
+    return '?';
+}
+
+function manifest(string $dir): array
+{
+    is_file("$dir/bench/manifest.json") || fail(basename($dir).' has no content yet (bin/bench generate '.basename($dir).')');
+
+    return json_decode(file_get_contents("$dir/bench/manifest.json"), true);
+}
+
+function same_fixture(string $a, string $b): void
+{
+    manifest($a)['config'] == manifest($b)['config'] || fail(sprintf('%s and %s hold different content; run `bin/bench generate` on both with the same --size and --seed', basename($a), basename($b)));
+}
+
+function edit_config(string $file, string $pattern, string $replacement): void
+{
+    $new = preg_replace($pattern, $replacement, file_get_contents($file), 1, $count);
+    $count === 1 || fail("couldn't set $replacement in ".basename($file));
+    file_put_contents($file, $new);
+}
+
+function median(array $xs): float
+{
+    sort($xs);
+    $n = count($xs);
+
+    return $n % 2 ? $xs[intdiv($n, 2)] : ($xs[$n / 2 - 1] + $xs[$n / 2]) / 2;
+}
+
+/** Median absolute deviation: how far a typical sample sits from the median. */
+function mad(array $xs): float
+{
+    $m = median($xs);
+
+    return median(array_map(fn ($x) => abs($x - $m), $xs));
+}
+
+function ms(float $ms): string
+{
+    return $ms >= 1000 ? number_format($ms, 0) : sprintf('%.1f', $ms);
+}
+
+function print_table(array $head, array $rows): void
+{
+    $widths = array_map(fn ($i) => max(array_map(fn ($row) => mb_strlen((string) $row[$i]), [$head, ...$rows])), array_keys($head));
+    foreach ([$head, ...$rows] as $n => $row) {
+        echo rtrim(implode('  ', array_map(fn ($cell, $i) => $i === 0 ? str_pad((string) $cell, $widths[$i]) : str_pad((string) $cell, $widths[$i], ' ', STR_PAD_LEFT), $row, array_keys($row))))."\n";
+        if ($n === 0) {
+            echo implode('  ', array_map(fn ($w) => str_repeat('-', $w), $widths))."\n";
+        }
+    }
+}
+
+function rcopy(string $from, string $to): void
+{
+    foreach (new RecursiveIteratorIterator(new RecursiveDirectoryIterator($from, FilesystemIterator::SKIP_DOTS), RecursiveIteratorIterator::SELF_FIRST) as $item) {
+        $dest = $to.substr($item->getPathname(), strlen($from));
+        $item->isDir() ? @mkdir($dest, 0777, true) : copy($item->getPathname(), $dest);
+    }
+}
+
+function rrmdir(string $dir): void
+{
+    if (! is_dir($dir)) {
+        return;
+    }
+    foreach (new RecursiveIteratorIterator(new RecursiveDirectoryIterator($dir, FilesystemIterator::SKIP_DOTS), RecursiveIteratorIterator::CHILD_FIRST) as $f) {
+        $f->isDir() && ! $f->isLink() ? rmdir($f->getPathname()) : unlink($f->getPathname());
+    }
+    rmdir($dir);
+}

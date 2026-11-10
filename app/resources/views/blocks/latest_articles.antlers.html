@@ -1,0 +1,14 @@
+{{ partial:components/section block="latest_articles" :heading="heading" tone="muted" }}
+    <div class="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
+        {{ if category }}
+            {{ collection:articles :limit="count" sort="date:desc" :taxonomy:categories="category:slug" }}
+                {{ partial:components/card_article }}
+            {{ /collection:articles }}
+        {{ else }}
+            {{ collection:articles :limit="count" sort="date:desc" }}
+                {{ partial:components/card_article }}
+            {{ /collection:articles }}
+        {{ /if }}
+    </div>
+    <p class="mt-8">{{ partial:components/button label="All articles" url="/articles" style="secondary" }}</p>
+{{ /partial:components/section }}

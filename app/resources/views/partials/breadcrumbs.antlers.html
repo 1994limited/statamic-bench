@@ -1,0 +1,14 @@
+<nav aria-label="Breadcrumb" class="border-b border-slate-100 bg-slate-50">
+    <ol class="mx-auto flex max-w-7xl flex-wrap items-center gap-2 px-4 py-3 text-xs text-slate-500 lg:px-8">
+        {{ nav:breadcrumbs }}
+            <li class="flex items-center gap-2">
+                {{ unless first }}<span aria-hidden="true">/</span>{{ /unless }}
+                {{ if is_current }}
+                    <span class="font-medium text-slate-700" aria-current="page">{{ title }}</span>
+                {{ else }}
+                    <a href="{{ url }}" class="hover:text-slate-900">{{ title }}</a>
+                {{ /if }}
+            </li>
+        {{ /nav:breadcrumbs }}
+    </ol>
+</nav>

@@ -1,0 +1,10 @@
+<section class="py-14 lg:py-20 {{ tone == 'muted' ? 'bg-slate-50' : '' }} {{ tone == 'dark' ? 'bg-slate-900 text-white' : '' }}" data-block="{{ block }}">
+    <div class="mx-auto max-w-7xl px-4 lg:px-8">
+        {{ if heading }}
+            <div class="mb-8 max-w-2xl">
+                {{ partial:components/heading :text="heading" level="2" size="lg" }}
+            </div>
+        {{ /if }}
+        {{ slot }}
+    </div>
+</section>

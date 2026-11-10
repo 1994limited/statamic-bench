@@ -1,0 +1,9 @@
+<article class="flex items-center gap-4 rounded-xl border border-slate-200 bg-white p-4">
+    {{ if photo }}
+        <img src="{{ photo:url }}" alt="{{ title }}" width="64" height="64" loading="lazy" class="h-16 w-16 rounded-full object-cover">
+    {{ /if }}
+    <div>
+        <h3 class="font-semibold"><a href="{{ url }}" class="hover:text-indigo-600">{{ title }}</a></h3>
+        <p class="text-sm text-slate-500">{{ role }}</p>
+    </div>
+</article>

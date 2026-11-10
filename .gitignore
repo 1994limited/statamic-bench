@@ -1,0 +1,4 @@
+targets.noindex/
+results/
+.DS_Store
+*.pickle

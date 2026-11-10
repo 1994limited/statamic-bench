@@ -1,0 +1,13 @@
+<article class="group flex flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm transition hover:shadow-md">
+    {{ if hero_image }}
+        <a href="{{ url }}" class="block aspect-video overflow-hidden bg-slate-100" tabindex="-1">
+            <img src="{{ hero_image:url }}" alt="{{ hero_image:alt }}" width="{{ hero_image:width }}" height="{{ hero_image:height }}" loading="lazy" class="h-full w-full object-cover transition group-hover:scale-105">
+        </a>
+    {{ /if }}
+    <div class="flex flex-1 flex-col gap-3 p-5">
+        {{ partial:components/term_list :terms="categories" }}
+        <h3 class="text-lg font-semibold leading-snug"><a href="{{ url }}" class="hover:text-indigo-600">{{ title }}</a></h3>
+        <p class="text-sm text-slate-600">{{ excerpt | truncate(140, '…') }}</p>
+        <div class="mt-auto">{{ partial:components/meta }}</div>
+    </div>
+</article>

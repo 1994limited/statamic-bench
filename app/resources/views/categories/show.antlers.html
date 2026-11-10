@@ -1,0 +1,15 @@
+{{ partial:components/page_header eyebrow="Category" :intro="description" }}
+<div class="mx-auto grid max-w-7xl gap-10 px-4 py-12 lg:grid-cols-4 lg:px-8">
+    <div class="lg:col-span-3">
+        {{ collection:articles :taxonomy:categories="slug" paginate="12" sort="date:desc" as="posts" }}
+            <p class="mb-6 text-sm text-slate-500">{{ total_results }} articles</p>
+            <div class="grid gap-6 md:grid-cols-2">
+                {{ posts }}
+                    {{ partial:components/card_article }}
+                {{ /posts }}
+            </div>
+            {{ partial:components/pagination }}
+        {{ /collection:articles }}
+    </div>
+    {{ partial:articles/_sidebar }}
+</div>

@@ -1,0 +1,32 @@
+<aside class="space-y-10">
+    <section>
+        <h2 class="text-sm font-semibold uppercase tracking-wide text-slate-500">Categories</h2>
+        <ul class="mt-4 space-y-2 text-sm">
+            {{ taxonomy:categories sort="title" }}
+                <li class="flex items-center justify-between">
+                    <a href="{{ url }}" class="hover:text-indigo-600">{{ title }}</a>
+                    <span class="rounded-full bg-slate-100 px-2 text-xs text-slate-500">{{ entries_count }}</span>
+                </li>
+            {{ /taxonomy:categories }}
+        </ul>
+    </section>
+    <section>
+        <h2 class="text-sm font-semibold uppercase tracking-wide text-slate-500">Featured</h2>
+        <ul class="mt-4 space-y-4 text-sm">
+            {{ collection:articles featured:is="true" limit="5" sort="date:desc" }}
+                <li>
+                    <a href="{{ url }}" class="font-medium hover:text-indigo-600">{{ title }}</a>
+                    <p class="text-xs text-slate-500">{{ date format="j M Y" }}</p>
+                </li>
+            {{ /collection:articles }}
+        </ul>
+    </section>
+    <section>
+        <h2 class="text-sm font-semibold uppercase tracking-wide text-slate-500">Popular tags</h2>
+        <ul class="mt-4 flex flex-wrap gap-1.5">
+            {{ taxonomy:tags limit="20" sort="title" }}
+                <li><a href="{{ url }}" class="rounded-full bg-slate-100 px-2.5 py-0.5 text-xs hover:bg-slate-200">{{ title }}</a></li>
+            {{ /taxonomy:tags }}
+        </ul>
+    </section>
+</aside>

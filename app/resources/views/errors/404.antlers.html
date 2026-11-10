@@ -1,0 +1,11 @@
+<div class="mx-auto max-w-2xl px-4 py-24 text-center">
+    <p class="text-sm font-semibold uppercase tracking-wide text-indigo-600">404</p>
+    {{ partial:components/heading text="Page not found" level="1" size="xl" }}
+    <p class="mt-4 text-slate-600">Sorry, we couldn't find the page you're looking for.</p>
+    <p class="mt-8">{{ partial:components/button label="Back home" url="/" style="primary" }}</p>
+    <ul class="mt-10 space-y-2 text-sm">
+        {{ collection:articles limit="3" sort="date:desc" }}
+            <li><a href="{{ url }}" class="text-indigo-600 hover:underline">{{ title }}</a></li>
+        {{ /collection:articles }}
+    </ul>
+</div>

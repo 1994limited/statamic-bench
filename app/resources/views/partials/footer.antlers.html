@@ -1,0 +1,25 @@
+<footer class="bg-slate-900 text-slate-300">
+    <div class="mx-auto grid max-w-7xl gap-10 px-4 py-14 lg:grid-cols-4 lg:px-8">
+        <div class="space-y-4">
+            <p class="text-lg font-bold text-white">{{ settings:site_name }}</p>
+            <p class="text-sm">{{ settings:footer_text }}</p>
+            <address class="text-sm not-italic">{{ settings:address | nl2br }}</address>
+            <a href="mailto:{{ settings:contact_email }}" class="text-sm underline">{{ settings:contact_email }}</a>
+        </div>
+        {{ partial:partials/footer_links }}
+        <div>
+            <p class="text-sm font-semibold uppercase tracking-wide text-white">Latest</p>
+            <ul class="mt-4 space-y-2 text-sm">
+                {{ collection:articles limit="4" sort="date:desc" }}
+                    <li><a href="{{ url }}" class="hover:text-white">{{ title | truncate(48, '…') }}</a></li>
+                {{ /collection:articles }}
+            </ul>
+        </div>
+    </div>
+    <div class="border-t border-slate-800">
+        <div class="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-4 px-4 py-6 text-xs lg:px-8">
+            <p>&copy; {{ now format="Y" }} {{ settings:site_name }}. All rights reserved.</p>
+            {{ partial:components/social_links }}
+        </div>
+    </div>
+</footer>

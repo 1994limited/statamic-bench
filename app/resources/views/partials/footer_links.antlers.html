@@ -1,0 +1,14 @@
+{{ nav:footer max_depth="2" }}
+    {{ if depth == 1 && index < 2 }}
+        <div>
+            <p class="text-sm font-semibold uppercase tracking-wide text-white">{{ title }}</p>
+            {{ if children }}
+                <ul class="mt-4 space-y-2 text-sm">
+                    {{ children }}
+                        <li><a href="{{ url }}" class="hover:text-white {{ is_current ? 'text-white' : '' }}">{{ title }}</a></li>
+                    {{ /children }}
+                </ul>
+            {{ /if }}
+        </div>
+    {{ /if }}
+{{ /nav:footer }}
