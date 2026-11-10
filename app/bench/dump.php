@@ -18,6 +18,14 @@ use Statamic\Facades\Term;
 
 bench_boot();
 
+// Saving through the API writes an entry's fields back in blueprint order, so
+// the order of the top-level keys says nothing about what the entry holds.
+$hash = function (array $data) {
+    ksort($data);
+
+    return md5(json_encode($data));
+};
+
 $entries = [];
 foreach (Entry::all() as $e) {
     $entries[$e->id()] = [
@@ -34,8 +42,8 @@ foreach (Entry::all() as $e) {
         'origin' => $e->origin()?->id(),
         'parent' => $e->parent()?->id(),
         'blueprint' => $e->blueprint()->handle(),
-        'data' => md5(json_encode($e->data()->all())),
-        'values' => md5(json_encode($e->values()->all())),
+        'data' => $hash($e->data()->all()),
+        'values' => $hash($e->values()->all()),
     ];
 }
 ksort($entries);
