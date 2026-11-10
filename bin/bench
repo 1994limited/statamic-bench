@@ -12,31 +12,6 @@ const ROOT = __DIR__.'/..';
 const TARGETS = ROOT.'/targets.noindex';   // .noindex keeps Spotlight out of the apps on macOS
 const RESULTS = ROOT.'/results';
 
-$argv = $_SERVER['argv'];
-array_shift($argv);
-$command = array_shift($argv) ?? 'help';
-[$args, $opts] = parse_args($argv);
-
-try {
-    match ($command) {
-        'setup' => cmd_setup($args, $opts),
-        'sync' => cmd_sync($args),
-        'generate' => cmd_generate($args, $opts),
-        'run' => cmd_run($args, $opts),
-        'compare' => cmd_compare($args, $opts),
-        'check' => cmd_check($args, $opts),
-        'verify' => cmd_verify($args, $opts),
-        'octane' => cmd_octane($args, $opts),
-        'profile' => cmd_profile($args, $opts),
-        'list' => cmd_list(),
-        'help', '--help', '-h' => print (HELP),
-        default => fail("unknown command \"$command\" (try: bin/bench help)"),
-    };
-} catch (BenchError $e) {
-    fwrite(STDERR, "bench: {$e->getMessage()}\n");
-    exit(1);
-}
-
 const HELP = <<<'TXT'
 statamic-bench
 
@@ -83,6 +58,32 @@ statamic-bench
 Environment: BENCH_PHP (PHP binary, default "php"), XDEBUG_SO (path to xdebug.so for `profile`).
 
 TXT;
+
+$argv = $_SERVER['argv'];
+array_shift($argv);
+$command = array_shift($argv) ?? 'help';
+[$args, $opts] = parse_args($argv);
+
+try {
+    match ($command) {
+        'setup' => cmd_setup($args, $opts),
+        'sync' => cmd_sync($args),
+        'generate' => cmd_generate($args, $opts),
+        'run' => cmd_run($args, $opts),
+        'compare' => cmd_compare($args, $opts),
+        'check' => cmd_check($args, $opts),
+        'verify' => cmd_verify($args, $opts),
+        'octane' => cmd_octane($args, $opts),
+        'profile' => cmd_profile($args, $opts),
+        'list' => cmd_list(),
+        'help', '--help', '-h' => print (HELP),
+        default => fail("unknown command \"$command\" (try: bin/bench help)"),
+    };
+} catch (BenchError $e) {
+    fwrite(STDERR, "bench: {$e->getMessage()}\n");
+    exit(1);
+}
+
 
 // ===================================================================== setup
 
