@@ -207,13 +207,14 @@ $redirects = [
 ];
 
 // a field holding every kind of value, for filters and sorting to disagree about
-$flags = [null, false, true, 0, '0', 1, 'a', 'B', '', ['x', 'y']];
+$flags = [null, false, true, 0, '0', 1, 'a', 'B', ''];
 $mixed = [];
 for ($i = 0; $i < 40; $i++) {
     $mixed[] = $id = $g->uuid();
     writeEntry("$root/content/collections/notes/en/".sprintf('mixed-%02d', $i).'.md', array_merge(
         ['id' => $id, 'title' => 'Mixed '.$g->word(), 'weight' => $i % 7],   // weights tie, so sorting has to be stable
         $i % 11 === 10 ? [] : ['flag' => $flags[$i % count($flags)]],
+        $i % 5 === 0 ? ['labels' => $i % 10 === 0 ? ['x', 'y'] : ['y']] : [],
     ));
 }
 

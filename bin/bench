@@ -372,6 +372,17 @@ function cmd_verify(array $args, array $opts): void
         $failed += $check['pass'] ? 0 : 1;
     }
     isset($result['checks']) || fail('the checks did not finish: '.json_encode($result));
+
+    echo "\n  as a queue worker, with another process changing things between jobs:\n";
+    child($dir, ['bench/build.php']);
+    $queue = child($dir, ['bench/queue.php', 'queue:work'], false);
+    isset($queue['checks']) || fail('the queue worker checks did not finish: '.json_encode($queue));
+    foreach ($queue['checks'] as $check) {
+        printf("  %s  %s%s\n", $check['pass'] ? 'pass' : 'FAIL', $check['name'], $check['pass'] ? '' : "\n        ".$check['detail']);
+        $failed += $check['pass'] ? 0 : 1;
+        $result['checks'][] = $check;
+    }
+    echo "\n";
     $moved = moved_directory_check($dir);
     printf("  %s  %s%s\n", $moved === null ? 'pass' : 'FAIL', 'pages render the same after the app\'s directory moves (a zero-downtime deploy)', $moved === null ? '' : "\n        $moved");
     $failed += $moved === null ? 0 : 1;
