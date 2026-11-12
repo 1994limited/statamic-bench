@@ -10,6 +10,12 @@ function bench_fingerprint(string $root): string
 {
     $files = ["$root/resources/sites.yaml"];
     foreach (['content', 'resources/blueprints', 'public/assets', 'users'] as $dir) {
+        if (! is_dir("$root/$dir")) {
+            // a missing directory is a difference, not a crash
+            $files[] = "$root/$dir";
+
+            continue;
+        }
         foreach (new RecursiveIteratorIterator(new RecursiveDirectoryIterator("$root/$dir", FilesystemIterator::SKIP_DOTS)) as $file) {
             $files[] = $file->getPathname();
         }
@@ -17,7 +23,7 @@ function bench_fingerprint(string $root): string
     sort($files);
     $hash = hash_init('xxh128');
     foreach ($files as $file) {
-        hash_update($hash, substr($file, strlen($root)).':'.hash_file('xxh128', $file)."\n");
+        hash_update($hash, substr($file, strlen($root)).':'.(is_file($file) ? hash_file('xxh128', $file) : 'missing')."\n");
     }
 
     return hash_final($hash);

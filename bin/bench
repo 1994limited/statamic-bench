@@ -225,6 +225,10 @@ function cmd_generate(array $args, array $opts): void
     if (isset($opts['awkward'])) {
         $flags[] = '--awkward';
     }
+    // the generator writes the manifest last, so a generation that fails or is stopped leaves a target with
+    // no content to speak of ("run generate") instead of half of the new content under the old manifest
+    @unlink("$dir/bench/manifest.json");
+    rrmdir("$dir/bench/pristine");
     sh([...php($dir), 'bench/generate.php', ...$flags], $dir);
     rrmdir("$dir/storage/framework/views");
     @mkdir("$dir/storage/framework/views", 0777, true);
@@ -242,11 +246,14 @@ function cmd_generate(array $args, array $opts): void
  */
 function keep_pristine(string $dir): void
 {
-    rrmdir("$dir/bench/pristine");
+    // under another name until it is whole, so a copy that was stopped is never taken for the real thing
+    rrmdir("$dir/bench/pristine.partial");
     foreach (PRISTINE as $path) {
-        @mkdir("$dir/bench/pristine/$path", 0777, true);
-        sh(['rsync', '-a', "$dir/$path/", "$dir/bench/pristine/$path/"]);
+        @mkdir("$dir/bench/pristine.partial/$path", 0777, true);
+        sh(['rsync', '-a', "$dir/$path/", "$dir/bench/pristine.partial/$path/"]);
     }
+    rrmdir("$dir/bench/pristine");
+    rename("$dir/bench/pristine.partial", "$dir/bench/pristine");
 }
 
 /** Put the content back as generated if it isn't. True when something had changed. */

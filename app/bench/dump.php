@@ -190,4 +190,8 @@ foreach ($queries as $name => $query) {
     $results[$name] = is_array($result) ? [count($result), md5(json_encode($result)), array_slice($result, 0, 3)] : $result;
 }
 
+// collections and taxonomies come in whatever order the disk lists their files
+ksort($trees);
+ksort($indexes);
+
 bench_emit(['entries' => $entries, 'terms' => $terms, 'trees' => $trees, 'indexes' => $indexes, 'queries' => $results]);
