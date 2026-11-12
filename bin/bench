@@ -137,7 +137,7 @@ function cmd_setup(array $args, array $opts): void
     }
     save_target($dir, $target);
 
-    cmd_generate([$name], array_intersect_key($opts, ['size' => 1, 'seed' => 1]));
+    cmd_generate([$name], array_intersect_key($opts, ['size' => 1, 'seed' => 1, 'assets' => 1, 'awkward' => 1]));
     say("ready: $name is statamic/cms ".target_version($dir));
 }
 
@@ -164,14 +164,34 @@ function sync_src(string $dir, array $target): void
     sh([...php($dir), 'artisan', 'package:discover', '--quiet'], $dir, false);
 }
 
+/**
+ * Targets run their own copy of the bench scripts, templates and routes. Copy
+ * this checkout's over them, so a target set up last week runs today's bench.
+ */
+function sync_app(string $dir): void
+{
+    foreach (['bench', 'resources/views', 'routes'] as $path) {
+        foreach (new RecursiveIteratorIterator(new RecursiveDirectoryIterator(ROOT."/app/$path", FilesystemIterator::SKIP_DOTS)) as $file) {
+            $to = "$dir/$path".substr($file->getPathname(), strlen(ROOT."/app/$path"));
+            if (! is_file($to) || md5_file($to) !== md5_file($file->getPathname())) {
+                @mkdir(dirname($to), 0777, true);
+                copy($file->getPathname(), $to);
+            }
+        }
+    }
+}
+
 function cmd_generate(array $args, array $opts): void
 {
     $dir = target_dir($args[0] ?? fail('generate needs a target name'));
     $flags = [];
-    foreach (['size', 'seed', 'articles', 'products', 'events', 'people', 'tags'] as $k) {
+    foreach (['size', 'seed', 'articles', 'products', 'events', 'people', 'tags', 'assets'] as $k) {
         if (isset($opts[$k])) {
             $flags[] = "--$k={$opts[$k]}";
         }
+    }
+    if (isset($opts['awkward'])) {
+        $flags[] = '--awkward';
     }
     sh([...php($dir), 'bench/generate.php', ...$flags], $dir);
     rrmdir("$dir/storage/framework/views");
@@ -624,6 +644,7 @@ function target_dir(string $name): string
 {
     $dir = TARGETS."/$name";
     is_file("$dir/bench/target.json") || fail("no target \"$name\" (bin/bench setup $name)");
+    sync_app($dir);
 
     return $dir;
 }
@@ -659,7 +680,8 @@ function manifest(string $dir): array
 
 function same_fixture(string $a, string $b): void
 {
-    manifest($a)['config'] == manifest($b)['config'] || fail(sprintf('%s and %s hold different content; run `bin/bench generate` on both with the same --size and --seed', basename($a), basename($b)));
+    [$ma, $mb] = [manifest($a), manifest($b)];
+    ($ma['config'] == $mb['config'] && ($ma['fingerprint'] ?? null) === ($mb['fingerprint'] ?? null)) || fail(sprintf('%s and %s hold different content; run `bin/bench generate` on both with the same --size and --seed', basename($a), basename($b)));
 }
 
 function edit_config(string $file, string $pattern, string $replacement): void

@@ -9,8 +9,12 @@
  * Statamic's own API, so the code under test cannot change the fixture: the
  * same seed and size always produce the same bytes.
  *
- *   php bench/generate.php [--size=micro|small|medium|large] [--seed=1001]
- *       [--articles=N] [--products=N] [--events=N] [--people=N] [--tags=N]
+ *   php bench/generate.php [--size=micro|small|medium|large|huge] [--seed=1001]
+ *       [--articles=N] [--products=N] [--events=N] [--people=N] [--tags=N] [--assets=N]
+ *       [--awkward]
+ *
+ * --awkward adds the content real sites have and generated ones don't: see
+ * generate_awkward.php.
  *
  * Writes bench/manifest.json: the URLs each scenario requests and the entries
  * the save scenario touches.
@@ -27,9 +31,11 @@ const SIZES = [
     'small' => ['articles' => 200, 'products' => 60, 'events' => 40, 'people' => 12, 'tags' => 30, 'tree' => [4, 3]],
     'medium' => ['articles' => 2000, 'products' => 300, 'events' => 200, 'people' => 30, 'tags' => 80, 'tree' => [6, 4, 2]],
     'large' => ['articles' => 9000, 'products' => 1500, 'events' => 600, 'people' => 60, 'tags' => 200, 'tree' => [6, 4, 3, 2]],
+    // about 50,000 entries: slow to build, so for looking at how costs grow rather than for everyday comparisons
+    'huge' => ['articles' => 45000, 'products' => 3000, 'events' => 1500, 'people' => 120, 'tags' => 400, 'tree' => [6, 4, 3, 2]],
 ];
 
-$opts = getopt('', ['size:', 'seed:', 'articles:', 'products:', 'events:', 'people:', 'tags:']);
+$opts = getopt('', ['size:', 'seed:', 'articles:', 'products:', 'events:', 'people:', 'tags:', 'assets:', 'awkward']);
 $size = $opts['size'] ?? 'small';
 isset(SIZES[$size]) || exit("generate: unknown size $size\n");
 $cfg = ['size' => $size, 'seed' => (int) ($opts['seed'] ?? 1001)] + SIZES[$size];
@@ -38,6 +44,9 @@ foreach (['articles', 'products', 'events', 'people', 'tags'] as $k) {
         $cfg[$k] = max(4, (int) $opts[$k]);
     }
 }
+$cfg['awkward'] = isset($opts['awkward']);
+// entries only ever point at the first 40; the rest are there to be listed, counted and warmed
+$cfg['assets'] = max(40, (int) ($opts['assets'] ?? ($cfg['awkward'] ? 2000 : 40)));
 
 $root = dirname(__DIR__);
 $g = new Gen($cfg['seed']);
@@ -66,13 +75,15 @@ writeYaml("$root/resources/sites.yaml", [
 // ---------------------------------------------------------------- assets
 
 $assets = [];
-for ($i = 0; $i < 40; $i++) {
+for ($i = 0; $i < $cfg['assets']; $i++) {
     [$w, $h] = [16 + $i % 9, 9 + ($i * 3) % 7];
     $name = sprintf('img-%02d-%s.png', $i, $g->word());
+    // past the first 40 they go into folders, fifty to each
+    $folder = $i < 40 ? '' : sprintf('library/%03d/', intdiv($i, 50));
     $png = png($w, $h, $g->int(0, 255), $g->int(0, 255), $g->int(0, 255));
-    @mkdir("$root/public/assets/.meta", 0777, true);
-    file_put_contents("$root/public/assets/$name", $png);
-    writeYaml("$root/public/assets/.meta/$name.yaml", [
+    @mkdir("$root/public/assets/$folder.meta", 0777, true);
+    file_put_contents("$root/public/assets/$folder$name", $png);
+    writeYaml("$root/public/assets/$folder.meta/$name.yaml", [
         'data' => ['alt' => ucfirst($g->words(3))],
         'size' => strlen($png),
         'last_modified' => T0 + $i,
@@ -81,7 +92,9 @@ for ($i = 0; $i < 40; $i++) {
         'mime_type' => 'image/png',
         'duration' => null,
     ]);
-    $assets[] = $name;
+    if ($i < 40) {
+        $assets[] = $name;
+    }
 }
 writeYaml("$root/content/assets/assets.yaml", ['title' => 'Assets', 'disk' => 'assets']);
 writeYaml("$root/resources/blueprints/assets/assets.yaml", ['title' => 'Asset', 'fields' => [field('alt', ['type' => 'text'])]]);
@@ -111,6 +124,23 @@ writeYaml("$root/resources/blueprints/taxonomies/categories/category.yaml", ['ti
     field('description', ['type' => 'textarea']),
 )]);
 writeYaml("$root/resources/blueprints/taxonomies/tags/tag.yaml", ['title' => 'Tag', 'tabs' => tab(field('title', ['type' => 'text']))]);
+
+// A big taxonomy that entries really use, some terms with no file of their own
+// (Statamic makes those up from the entries that mention them).
+$keywords = [];
+if ($cfg['awkward']) {
+    for ($i = 0; $i < ($size === 'micro' ? 200 : 1000); $i++) {
+        $keywords[] = $slug = sprintf('kw-%04d-%s', $i, WORDS[$i % count(WORDS)]);
+        writeYaml("$root/content/taxonomies/keywords/$slug.yaml", ['title' => 'Keyword '.$i, 'localizations' => ['fr' => ['title' => 'Mot-clé '.$i]]]);
+    }
+    // a byte order mark, as some editors on Windows leave behind
+    file_put_contents("$root/content/taxonomies/keywords/kw-bom.yaml", "\xEF\xBB\xBFtitle: 'Keyword with a BOM'\n");
+    $keywords[] = 'kw-bom';
+    writeYaml("$root/content/taxonomies/keywords.yaml", ['title' => 'Keywords', 'sites' => ['en', 'fr']]);
+    writeYaml("$root/resources/blueprints/taxonomies/keywords/keyword.yaml", ['title' => 'Keyword', 'tabs' => tab(field('title', ['type' => 'text']))]);
+}
+$implicitKeywords = array_map(fn ($i) => "implicit-keyword-$i", range(0, 19));
+$articleKeywords = [];
 
 // ---------------------------------------------------------------- blueprints
 
@@ -174,6 +204,7 @@ $blueprints = [
         field('categories', ['type' => 'terms', 'taxonomies' => ['categories']]),
         field('tags', ['type' => 'terms', 'taxonomies' => ['tags']]),
         field('related', ['type' => 'entries', 'collections' => ['articles']]),
+        ...($cfg['awkward'] ? [field('keywords', ['type' => 'terms', 'taxonomies' => ['keywords']])] : []),
         field('reading_time', ['type' => 'integer']),
         field('featured', ['type' => 'toggle']),
         field('slug', ['type' => 'slug']),
@@ -291,9 +322,17 @@ for ($i = 0; $i < $cfg['articles']; $i++) {
     $slugs['articles'][] = sprintf('%s-%s-%s-%05d', $g->word(), $g->word(), $g->word(), $i);
 }
 $articleCategories = [];
+$articleAuthors = [];
 for ($i = 0; $i < $cfg['articles']; $i++) {
     $date = date('Y-m-d', strtotime('2022-01-01') + ($i * 1087 % 1400) * 86400);
     $articleCategories[$i] = $g->pickMany($categories, $g->int(1, 2));
+    if ($cfg['awkward']) {
+        // squared, so a few keywords are on a great many articles and most are on a handful
+        $articleKeywords[$i] = array_values(array_unique([
+            ...array_map(fn () => $keywords[(int) (($g->int(0, 9999) / 10000) ** 2 * (count($keywords) - 1))], range(1, 3)),
+            ...($g->chance(0.1) ? [$g->pick($implicitKeywords)] : []),
+        ]));
+    }
     writeEntry("$root/content/collections/articles/en/$date.{$slugs['articles'][$i]}.md", [
         'id' => $ids['articles'][$i],
         'blueprint' => 'article',
@@ -301,9 +340,10 @@ for ($i = 0; $i < $cfg['articles']; $i++) {
         'excerpt' => $g->sentence(26),
         'hero_image' => $g->pick($assets),
         'content' => articleBody($g, $assets, $ids),
-        'author' => $g->pick($ids['people']),
+        'author' => $articleAuthors[$i] = $g->pick($ids['people']),
         'categories' => $articleCategories[$i],
         'tags' => $g->pickMany($tags, $g->int(2, 5)),
+        'keywords' => $articleKeywords[$i] ?? null,
         'related' => $g->pickMany($ids['articles'], 3),
         'reading_time' => $g->int(2, 14),
         'featured' => $g->chance(0.1),
@@ -359,6 +399,22 @@ $build = function (int $level, array $ancestors) use (&$build, $cfg, $g, $page, 
 };
 $generated = $build(0, []);
 
+if ($cfg['awkward']) {
+    // six levels down, one page at each: deeper than the generated tree ever goes
+    $chainPath = [];
+    $chainBranch = null;
+    $chainIds = [];
+    foreach (range(1, 6) as $level) {
+        $chainPath[] = $slug = "deep-chain-level-$level";
+        $chainIds[] = $page($slug, ['title' => "Deep chain level $level", 'intro' => $g->sentence(10)]);
+    }
+    foreach (array_reverse($chainIds) as $id) {
+        $chainBranch = ['entry' => $id] + ($chainBranch ? ['children' => [$chainBranch]] : []);
+    }
+    $generated[] = $chainBranch;
+    $pagePaths[] = $chainPath;
+}
+
 // the two showcase pages come last so their blocks can link to any page
 $fixed['about'] = $page('about', ['title' => 'About', 'intro' => $g->sentence(22), 'blocks' => array_map(
     fn ($t) => block($g, $t, $assets, $ids, $categories, $pageIds), array_keys($blockSets)
@@ -393,7 +449,7 @@ writeYaml("$root/content/collections/articles.yaml", [
     'template' => 'articles/show',
     'date' => true,
     'sort_dir' => 'desc',
-    'taxonomies' => ['categories', 'tags'],
+    'taxonomies' => ['categories', 'tags', ...($cfg['awkward'] ? ['keywords'] : [])],
     'sites' => ['en'],
 ]);
 
@@ -442,6 +498,19 @@ writeYaml("$root/resources/blueprints/globals/settings.yaml", ['title' => 'Setti
     field('social', ['type' => 'grid', 'fields' => [field('network', ['type' => 'text']), field('url', ['type' => 'text'])]]),
 )]);
 
+// ---------------------------------------------------------------- users
+
+// one super user, for the Control Panel scenarios to sign in as
+writeYaml("$root/users/bench@example.com.yaml", ['name' => 'Bench', 'super' => true, 'id' => $g->uuid()]);
+
+// ---------------------------------------------------------------- awkward
+
+$awkward = null;
+$awkwardPages = [];
+if ($cfg['awkward']) {
+    require __DIR__.'/generate_awkward.php';
+}
+
 // ---------------------------------------------------------------- manifest
 
 $at = fn (string $c, float $f) => $slugs[$c][(int) ($f * (count($slugs[$c]) - 1))];
@@ -473,6 +542,7 @@ $manifest = [
         'team_index' => ['/team', 200],
         'person' => [$personUrl, 200],
         'not_found' => ['/no-such-page', 404],
+        ...$awkwardPages,
     ],
     'save' => [
         'update_ids' => array_map(fn ($k) => $ids['articles'][($k * 7 + 1) % $cfg['articles']], range(0, 19)),
@@ -481,8 +551,13 @@ $manifest = [
     // an English page and its French localisation, for the origin checks
     'article' => ['id' => $ids['articles'][(int) (0.37 * ($cfg['articles'] - 1))], 'newest_date' => '2026-01-01'],
     'localised' => ['origin' => $fixed['contact'], 'localisation' => $french[$fixed['contact']], 'other_origin' => $fixed['about']],
+    'mount' => ['collection' => 'articles', 'page' => $fixed['articles']],
+    'user' => 'bench@example.com',
+    'awkward' => $awkward,
+    // what was actually written, so two targets can be told apart even when they were asked for the same thing
+    'fingerprint' => fingerprint($root, ['content', 'resources/blueprints', 'public/assets', 'users']),
 ];
-file_put_contents("$root/bench/manifest.json", json_encode($manifest, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES)."\n");
+file_put_contents("$root/bench/manifest.json", json_encode($manifest, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_PRESERVE_ZERO_FRACTION)."\n");
 
 fwrite(STDERR, sprintf("generated %s (seed %d): %s\n", $size, $cfg['seed'], json_encode($manifest['counts'])));
 
@@ -680,6 +755,25 @@ function writeEntry(string $path, array $data): void
 {
     @mkdir(dirname($path), 0777, true);
     file_put_contents($path, "---\n".dump($data)."---\n");
+}
+
+/** A hash of every file under the given directories, by path and contents. */
+function fingerprint(string $root, array $dirs): string
+{
+    $hash = hash_init('xxh128');
+    foreach ($dirs as $dir) {
+        $files = [];
+        $it = new RecursiveIteratorIterator(new RecursiveDirectoryIterator("$root/$dir", FilesystemIterator::SKIP_DOTS));
+        foreach ($it as $f) {
+            $files[] = $f->getPathname();
+        }
+        sort($files);
+        foreach ($files as $file) {
+            hash_update($hash, substr($file, strlen($root)).':'.hash_file('xxh128', $file)."\n");
+        }
+    }
+
+    return hash_final($hash);
 }
 
 function rrmdir(string $dir): void
