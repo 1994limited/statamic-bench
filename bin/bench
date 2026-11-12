@@ -16,7 +16,7 @@ const HELP = <<<'TXT'
 statamic-bench
 
   bin/bench setup <target> [--cms=6.40.0] [--src=/path/to/cms] [--repo=URL] [--patch=file.patch]
-                           [--skeleton=VERSION] [--size=small] [--seed=1001]
+                           [--skeleton=VERSION] [--size=small] [--seed=1001] [--awkward] [--assets=N]
       Build an app in targets.noindex/<target>: the statamic/statamic skeleton, statamic/cms at
       --cms (any Composer constraint, default the latest release), then the bench site on top.
       --src copies a local statamic/cms checkout over the installed package (see `sync`);
@@ -26,23 +26,30 @@ statamic-bench
   bin/bench sync <target>
       Copy the --src checkout over the installed package again, after you've changed it.
 
-  bin/bench generate <target> [--size=micro|small|medium|large] [--seed=1001] [--articles=N ...]
+  bin/bench generate <target> [--size=micro|small|medium|large|huge] [--seed=1001] [--articles=N ...]
+                              [--awkward] [--assets=N]
       Write the content again at another size. Every target you compare needs the same content.
+      --awkward adds the content real sites have and generated ones don't: hand-written YAML,
+      computed values that query, number ids, duplicates, scheduled entries, a thousand terms,
+      relations across sites, deep trees, a couple of thousand assets. `huge` is 50,000 entries.
 
   bin/bench run <target> [--r=10] [--only=home,article] [--skip=build,cold,save] [--out=file.json]
-      Time the scenarios: the Stache build, a first request with nothing cached, each page with
-      everything warm (one PHP process per request, like PHP-FPM), and entry saves.
+      Time the scenarios: the Stache build (and with parallel warming), the first query and the
+      first request with nothing cached, each page and Control Panel request with everything
+      warm (one PHP process per request, like PHP-FPM), and entry saves.
 
   bin/bench compare <a> <b> [--rounds=3] [--r=10] [--only=...] [--skip=...]
       Run both targets in alternating order for some rounds and print the difference.
 
   bin/bench check <a> <b>
-      Render every page in both targets and report any difference in the HTML, then compare
-      what the Stache holds (every entry's URL, status, dates and data).
+      Render every page and Control Panel request in both targets and report any difference,
+      then compare what the Stache holds: every entry's URL, status, dates and data, a fixed
+      list of indexes, and the ids a spread of queries return.
 
   bin/bench verify <target>
       Run behaviour checks that have caught real bugs in performance changes: change tracking,
-      localised entries, URLs, and what a second process sees after a save.
+      localised entries, URLs, moved pages and mounts, the awkward content, and what a queue
+      worker sees after another process saves, creates, renames or deletes.
 
   bin/bench octane <target> [<other>] [--r=20] [--only=...]
       Serve the pages from one long-lived Laravel Octane worker: time per request, memory
@@ -54,6 +61,10 @@ statamic-bench
 
   bin/bench list
       The targets you have and the scenarios they can run.
+
+Every command also takes:
+  --memory-limit=512M   run every PHP process under this limit (8G otherwise), parallel workers included
+  --timeout=900         seconds any one bench process may run before it is stopped and the run fails
 
 Environment: BENCH_PHP (PHP binary, default "php"), XDEBUG_SO (path to xdebug.so for `profile`).
 
@@ -420,7 +431,7 @@ function cmd_verify(array $args, array $opts): void
     $result = child($dir, ['bench/checks.php'], false);
     $failed = 0;
     foreach ($result['checks'] ?? [] as $check) {
-        printf("  %s  %s%s\n", $check['pass'] ? 'pass' : 'FAIL', $check['name'], $check['pass'] ? '' : "\n        ".$check['detail']);
+        printf("  %s  %s%s%s\n", $check['pass'] ? 'pass' : 'FAIL', $check['name'], ($check['seconds'] ?? 0) >= 10 ? " ({$check['seconds']} s)" : '', $check['pass'] ? '' : "\n        ".$check['detail']);
         $failed += $check['pass'] ? 0 : 1;
     }
     isset($result['checks']) || fail('the checks did not finish: '.json_encode($result));
@@ -430,7 +441,7 @@ function cmd_verify(array $args, array $opts): void
     $queue = child($dir, ['bench/queue.php', 'queue:work'], false);
     isset($queue['checks']) || fail('the queue worker checks did not finish: '.json_encode($queue));
     foreach ($queue['checks'] as $check) {
-        printf("  %s  %s%s\n", $check['pass'] ? 'pass' : 'FAIL', $check['name'], $check['pass'] ? '' : "\n        ".$check['detail']);
+        printf("  %s  %s%s%s\n", $check['pass'] ? 'pass' : 'FAIL', $check['name'], ($check['seconds'] ?? 0) >= 10 ? " ({$check['seconds']} s)" : '', $check['pass'] ? '' : "\n        ".$check['detail']);
         $failed += $check['pass'] ? 0 : 1;
         $result['checks'][] = $check;
     }
@@ -464,6 +475,8 @@ function moved_directory_check(string $dir): ?string
 
         return null;
     };
+    // from a fully built Stache, whatever the checks before this one left behind
+    child($dir, ['bench/build.php']);
     $render($dir, 'before');
     rename($dir, $moved) || fail("couldn't move $dir");
     try {
@@ -518,7 +531,7 @@ function cmd_octane(array $args, array $opts): void
         printf("\n%s: memory after %d requests %.1f MB, after %d requests %.1f MB (%+.2f MB)\n", $names[$i], $result['memory']['early_requests'], $result['memory']['early_mb'],
             $result['memory']['requests'], $result['memory']['late_mb'], $result['memory']['late_mb'] - $result['memory']['early_mb']);
         foreach ($result['checks'] as $n => $check) {
-            printf("  %s  %s%s\n", $check['pass'] ? 'pass' : 'FAIL', $check['name'], $check['pass'] ? '' : "\n        ".$check['detail']);
+            printf("  %s  %s%s%s\n", $check['pass'] ? 'pass' : 'FAIL', $check['name'], ($check['seconds'] ?? 0) >= 10 ? " ({$check['seconds']} s)" : '', $check['pass'] ? '' : "\n        ".$check['detail']);
             // with two targets, only a check the first passes and the second fails counts against it
             $failed += $check['pass'] || ($i === 1 && ! $results[0]['checks'][$n]['pass']) || ($i === 0 && count($dirs) === 2) ? 0 : 1;
         }
@@ -691,7 +704,8 @@ function child(string $dir, array $script, bool $strict = true, array $env = [])
     $proc = proc_open([...php($dir), ...$script], [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes, $dir, $env);
     stream_set_blocking($pipes[1], false);
     stream_set_blocking($pipes[2], false);
-    [$out, $err, $deadline, $timedOut] = ['', '', microtime(true) + $timeout, false];
+    // hrtime() doesn't advance while the machine is asleep, so a laptop that naps mid-run isn't taken for a hang
+    [$out, $err, $deadline, $timedOut] = ['', '', hrtime(true) + $timeout * 1e9, false];
     while (true) {
         $out .= stream_get_contents($pipes[1]);
         $err .= stream_get_contents($pipes[2]);
@@ -699,7 +713,7 @@ function child(string $dir, array $script, bool $strict = true, array $env = [])
         if (! $status['running']) {
             break;
         }
-        if (microtime(true) > $deadline) {
+        if (hrtime(true) > $deadline) {
             $timedOut = true;
             // the script and anything it started
             exec('pkill -9 -P '.(int) $status['pid'].' 2>/dev/null');

@@ -153,12 +153,14 @@ final class BenchChecks
 
     public function check(string $name, callable $test): void
     {
+        $started = hrtime(true);
         try {
             $detail = $test();
-            $this->results[] = ['name' => $name, 'pass' => $detail === null, 'detail' => (string) $detail];
+            $result = ['name' => $name, 'pass' => $detail === null, 'detail' => (string) $detail];
         } catch (Throwable $e) {
-            $this->results[] = ['name' => $name, 'pass' => false, 'detail' => get_class($e).': '.$e->getMessage().' at '.basename($e->getFile()).':'.$e->getLine()];
+            $result = ['name' => $name, 'pass' => false, 'detail' => get_class($e).': '.$e->getMessage().' at '.basename($e->getFile()).':'.$e->getLine()];
         }
+        $this->results[] = $result + ['seconds' => round((hrtime(true) - $started) / 1e9, 1)];
     }
 }
 

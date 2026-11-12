@@ -355,6 +355,30 @@ if ($a = $m['awkward'] ?? null) {
             ?? bench_differs('parent', $a['deep_chain'][4], Entry::find($a['deep_chain'][5])->parent()?->id());
     });
 
+    $c->check('the same on a collection with no mount or structure, where only the computed value needs other entries', function () use ($a) {
+        $index = Statamic\Facades\Stache::store('entries')->store('products')->index('stock_peers');
+        foreach ($a['computed']['stock_peers']['sample'] as $id => $expected) {
+            if ($problem = bench_differs("index value for $id", $expected, $index->get($id))) {
+                return $problem;
+            }
+        }
+
+        return bench_differs('products indexed as having that many in-stock peers', $a['computed']['stock_peers']['in_stock'],
+            Entry::query()->where('collection', 'products')->where('stock_peers', $a['computed']['stock_peers']['in_stock'])->count());
+    });
+
+    $c->check('queries on those computed values are right when they are the first thing to touch an unbuilt Stache', function () use ($a) {
+        // In a process of its own, which empties the Stache first: the index is then built while the
+        // entries are being made, and what it's computed from is a query on those same entries.
+        $articles = bench_child(['bench/query.php', '--where=same_author_count:>=:'.$a['computed']['threshold']]);
+        $products = bench_child(['bench/query.php', '--in=products', '--where=stock_peers:=:'.$a['computed']['stock_peers']['in_stock']]);
+        // put back what the rest of the checks expect
+        bench_child(['bench/build.php']);
+
+        return bench_differs('articles whose author has that many or more', $a['computed']['at_or_over_threshold'], $articles['entries'])
+            ?? bench_differs('products with that many in-stock peers', $a['computed']['stock_peers']['in_stock'], $products['entries']);
+    });
+
     $c->check('every asset in the container is found, in its folder', function () use ($a) {
         $assets = Statamic\Facades\Asset::query()->where('container', 'assets');
 

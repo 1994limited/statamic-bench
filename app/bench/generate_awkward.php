@@ -320,6 +320,9 @@ $awkward = [
     'deep_chain' => $chainIds,
     'deep_nav_nodes' => $deepNavNodes,
     'computed' => [
+        // products aren't mounted or structured, so nothing but the computed value itself goes looking for other entries
+        'stock_peers' => ['in_stock' => count(array_filter($productStock)), 'out_of_stock' => count($productStock) - count(array_filter($productStock)),
+            'sample' => array_combine(array_slice($ids['products'], 0, 6), array_map(fn ($stock) => count(array_filter($productStock, fn ($other) => $other === $stock)), array_slice($productStock, 0, 6)))],
         'same_author_count' => array_combine(array_map(fn ($i) => $ids['articles'][$i], $sample), array_map(fn ($i) => $perAuthor[$articleAuthors[$i]], $sample)),
         'threshold' => $threshold,
         'at_or_over_threshold' => array_sum(array_filter($perAuthor, fn ($n) => $n >= $threshold)),

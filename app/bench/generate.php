@@ -250,6 +250,7 @@ foreach ($blueprints as $path => $fields) {
 // ---------------------------------------------------------------- people
 
 $ids = ['people' => [], 'articles' => [], 'products' => [], 'events' => []];
+$productStock = [];
 $slugs = $ids;
 $roles = [];
 $eventUrls = [];
@@ -290,7 +291,7 @@ for ($i = 0; $i < $cfg['products']; $i++) {
         'specs' => array_map(fn () => ['id' => $g->setId(), 'label' => ucfirst($g->word()), 'value' => $g->words(2), 'highlight' => $g->chance(0.2)], range(1, $g->int(4, 9))),
         'categories' => $g->pickMany($categories, $g->int(1, 2)),
         'related' => $g->pickMany($ids['products'], $g->int(2, 4)),
-        'in_stock' => $g->chance(0.8),
+        'in_stock' => $productStock[$i] = $g->chance(0.8),
         'seo_description' => $g->sentence(14),
         'updated_at' => T0 + $i,
     ]);

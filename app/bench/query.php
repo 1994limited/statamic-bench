@@ -9,6 +9,12 @@
  *
  * It's a listing: twelve published articles ordered by title. Answering it
  * needs four of the collection's indexes, not all of them.
+ *
+ *   php bench/query.php --where=field:operator:value [--in=collection]
+ *
+ * Counts the entries (articles, unless --in says otherwise) matching one condition instead, again as the first thing
+ * to touch an unbuilt Stache. With a computed field, that's a field whose
+ * index has to be built while the entries it's computed from are being made.
  */
 
 require __DIR__.'/lib.php';
@@ -22,7 +28,14 @@ Statamic\Facades\Stache::clear();
 gc_collect_cycles();
 memory_reset_peak_usage();
 $t = hrtime(true);
-$ids = Entry::query()->where('collection', 'articles')->where('site', 'en')->where('published', true)->orderBy('title')->limit(12)->get()->map->id()->all();
+$opts = bench_opts(['where:', 'in:']);
+$where = $opts['where'] ?? null;
+if ($where) {
+    [$field, $operator, $value] = explode(':', $where, 3);
+    $ids = Entry::query()->where('collection', $opts['in'] ?? 'articles')->where($field, $operator, is_numeric($value) ? (int) $value : $value)->get()->map->id()->all();
+} else {
+    $ids = Entry::query()->where('collection', 'articles')->where('site', 'en')->where('published', true)->orderBy('title')->limit(12)->get()->map->id()->all();
+}
 $ms = (hrtime(true) - $t) / 1e6;
 
 bench_emit([
@@ -32,4 +45,4 @@ bench_emit([
     'first' => $ids[0] ?? null,
 ]);
 
-exit(count($ids) === 12 ? 0 : 1);
+exit($where || count($ids) === 12 ? 0 : 1);

@@ -94,7 +94,7 @@ $canonical = function ($value) use (&$canonical) {
 $catalogue = [
     '*' => ['id', 'slug', 'uri', 'title', 'published', 'site', 'origin', 'parent', 'order', 'date', 'collectionHandle', 'status', 'blueprint'],
     'articles' => ['author', 'featured', 'reading_time', 'categories', 'tags', 'keywords', 'same_author_count'],
-    'products' => ['price', 'in_stock', 'categories', 'sku'],
+    'products' => ['price', 'in_stock', 'categories', 'sku', 'stock_peers'],
     'notes' => ['flag', 'weight', 'labels', 'title_length', 'redirect', 'see_also'],
 ];
 $indexes = [];
