@@ -12,6 +12,21 @@ const ROOT = __DIR__.'/..';
 const TARGETS = ROOT.'/targets.noindex';   // .noindex keeps Spotlight out of the apps on macOS
 const RESULTS = ROOT.'/results';
 
+require ROOT.'/app/bench/fingerprint.php';
+
+// what the checks change and `restore_fixture()` puts back
+const PRISTINE = ['content', 'users'];
+
+register_shutdown_function(function () {
+    foreach (array_keys($GLOBALS['fixtures'] ?? []) as $dir) {
+        try {
+            is_dir($dir) && restore_fixture($dir);
+        } catch (Throwable $e) {
+            fwrite(STDERR, "bench: {$e->getMessage()}\n");
+        }
+    }
+});
+
 const HELP = <<<'TXT'
 statamic-bench
 
@@ -213,6 +228,59 @@ function cmd_generate(array $args, array $opts): void
     sh([...php($dir), 'bench/generate.php', ...$flags], $dir);
     rrmdir("$dir/storage/framework/views");
     @mkdir("$dir/storage/framework/views", 0777, true);
+    // whatever was built from the old content
+    rrmdir("$dir/storage/framework/cache/data");
+    keep_pristine($dir);
+}
+
+/**
+ * The checks change content (that is what they are for) and put it back
+ * through Statamic, which is the code under test: it may write the same data
+ * in another order, or be stopped half way. So a copy of what the generator
+ * wrote is kept beside it, and every command starts and ends by making sure
+ * the content is that, byte for byte.
+ */
+function keep_pristine(string $dir): void
+{
+    rrmdir("$dir/bench/pristine");
+    foreach (PRISTINE as $path) {
+        @mkdir("$dir/bench/pristine/$path", 0777, true);
+        sh(['rsync', '-a', "$dir/$path/", "$dir/bench/pristine/$path/"]);
+    }
+}
+
+/** Put the content back as generated if it isn't. True when something had changed. */
+function restore_fixture(string $dir): bool
+{
+    $fingerprint = manifest($dir)['fingerprint'] ?? null;
+    array_map('unlink', glob("$dir/storage/framework/bench-*.json"));
+    if (bench_fingerprint($dir) === $fingerprint) {
+        is_dir("$dir/bench/pristine") || keep_pristine($dir);
+
+        return false;
+    }
+    $again = basename($dir).' no longer holds the content it was generated with (or an older bench generated it), and it could not be put back; run `bin/bench generate '.basename($dir).'` with the options it was made with';
+    is_dir("$dir/bench/pristine") || fail($again);
+    foreach (PRISTINE as $path) {
+        sh(['rsync', '-a', '--checksum', '--delete', "$dir/bench/pristine/$path/", "$dir/$path/"]);
+    }
+    bench_fingerprint($dir) === $fingerprint || fail($again);
+    // the Stache may hold what was there a moment ago
+    rrmdir("$dir/storage/framework/cache/data");
+
+    return true;
+}
+
+/** A target whose content a command is about to read: as generated now, and again when the command ends, however it ends. */
+function fixture_dir(string $name): string
+{
+    $dir = target_dir($name);
+    if (restore_fixture($dir)) {
+        say(basename($dir).': the content had been changed since it was generated (a run that was stopped?); put back');
+    }
+    $GLOBALS['fixtures'][$dir] = true;
+
+    return $dir;
 }
 
 function cmd_list(): void
@@ -232,7 +300,7 @@ function cmd_list(): void
 
 function cmd_run(array $args, array $opts): void
 {
-    $dir = target_dir($args[0] ?? fail('run needs a target name'));
+    $dir = fixture_dir($args[0] ?? fail('run needs a target name'));
     $result = run_target($dir, $opts);
     print_table(['scenario', 'median ms', 'min', 'max', 'boot ms', 'peak MB'], array_map(
         fn ($name, $s) => [$name, ms(median($s['ms'])), ms(min($s['ms'])), ms(max($s['ms'])), isset($s['boot_ms']) ? ms(median($s['boot_ms'])) : '', sprintf('%.1f', max($s['peak_mem_mb']))],
@@ -355,16 +423,19 @@ function cp_request(string $dir, array $m, string $url, bool $json, ?string $htm
 function cmd_compare(array $args, array $opts): void
 {
     count($args) === 2 || fail('compare needs two target names');
-    [$a, $b] = array_map('target_dir', $args);
+    [$a, $b] = array_map('fixture_dir', $args);
     same_fixture($a, $b);
     $rounds = (int) ($opts['rounds'] ?? 3);
-    $samples = [];
+    $samples = $fellBack = [];
     for ($round = 0; $round < $rounds; $round++) {
         foreach ($round % 2 ? [$b, $a] : [$a, $b] as $dir) {
             fwrite(STDERR, sprintf('round %d/%d %-12s ', $round + 1, $rounds, basename($dir)));
             foreach (run_target($dir, $opts)['scenarios'] as $name => $s) {
-                foreach ($s as $k => $values) {
+                foreach (array_filter($s, 'is_array') as $k => $values) {
                     $samples[$name][$dir][$k] = [...($samples[$name][$dir][$k] ?? []), ...$values];
+                }
+                if ($s['fell_back'] ?? 0) {
+                    $fellBack[$name][basename($dir)] = ['builds' => ($fellBack[$name][basename($dir)]['builds'] ?? 0) + $s['fell_back'], 'why' => $s['why']];
                 }
             }
         }
@@ -383,9 +454,15 @@ function cmd_compare(array $args, array $opts): void
     print_table(['scenario', basename($a).' ms', basename($b).' ms', 'time', 'noise', '', basename($a).' MB', basename($b).' MB', 'memory'], $rows);
     echo "\ntime = median of every sample; noise = spread of the samples (median absolute deviation, both targets);\na difference under twice the noise (or under 2%) is reported as \"same\".\n";
 
+    foreach ($fellBack as $name => $targets) {
+        foreach ($targets as $target => $fell) {
+            echo "\n$name on $target: {$fell['builds']} of ".count($samples[$name][TARGETS."/$target"]['ms'])." builds fell back to the ordinary build, so they did not run in parallel: {$fell['why']}\n";
+        }
+    }
+
     $out = $opts['out'] ?? RESULTS.'/compare-'.basename($a).'-'.basename($b).'-'.date('Ymd-His').'.json';
     @mkdir(dirname($out), 0777, true);
-    file_put_contents($out, json_encode(['a' => load_target($a), 'b' => load_target($b), 'rounds' => $rounds, 'fixture' => manifest($a)['config'],
+    file_put_contents($out, json_encode(['a' => load_target($a), 'b' => load_target($b), 'rounds' => $rounds, 'fixture' => manifest($a)['config'], 'fell_back' => $fellBack,
         'samples' => array_map(fn ($s) => [basename($a) => $s[$a], basename($b) => $s[$b]], $samples)], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES)."\n");
     say("wrote $out");
 }
@@ -395,7 +472,7 @@ function cmd_compare(array $args, array $opts): void
 function cmd_check(array $args, array $opts): void
 {
     count($args) === 2 || fail('check needs two target names');
-    [$a, $b] = array_map('target_dir', $args);
+    [$a, $b] = array_map('fixture_dir', $args);
     same_fixture($a, $b);
     $out = RESULTS.'/check';
     $different = 0;
@@ -426,7 +503,7 @@ function cmd_check(array $args, array $opts): void
 
 function cmd_verify(array $args, array $opts): void
 {
-    $dir = target_dir($args[0] ?? fail('verify needs a target name'));
+    $dir = fixture_dir($args[0] ?? fail('verify needs a target name'));
     child($dir, ['bench/build.php']);
     $result = child($dir, ['bench/checks.php'], false);
     $failed = 0;
@@ -437,6 +514,7 @@ function cmd_verify(array $args, array $opts): void
     isset($result['checks']) || fail('the checks did not finish: '.json_encode($result));
 
     echo "\n  as a queue worker, with another process changing things between jobs:\n";
+    restore_fixture($dir);
     child($dir, ['bench/build.php']);
     $queue = child($dir, ['bench/queue.php', 'queue:work'], false);
     isset($queue['checks']) || fail('the queue worker checks did not finish: '.json_encode($queue));
@@ -446,6 +524,7 @@ function cmd_verify(array $args, array $opts): void
         $result['checks'][] = $check;
     }
     echo "\n";
+    restore_fixture($dir);
     $moved = moved_directory_check($dir);
     printf("  %s  %s%s\n", $moved === null ? 'pass' : 'FAIL', 'pages render the same after the app\'s directory moves (a zero-downtime deploy)', $moved === null ? '' : "\n        $moved");
     $failed += $moved === null ? 0 : 1;
@@ -498,7 +577,7 @@ function moved_directory_check(string $dir): ?string
 
 function cmd_octane(array $args, array $opts): void
 {
-    $dirs = array_map('target_dir', $args ?: fail('octane needs a target name (or two, to compare them)'));
+    $dirs = array_map('fixture_dir', $args ?: fail('octane needs a target name (or two, to compare them)'));
     count($dirs) <= 2 || fail('octane takes one or two targets');
     count($dirs) === 2 && same_fixture(...$dirs);
     $results = array_map(fn ($dir) => octane_target($dir, $opts), $dirs);
@@ -577,7 +656,7 @@ function octane_target(string $dir, array $opts): array
 
 function cmd_profile(array $args, array $opts): void
 {
-    $dir = target_dir($args[0] ?? fail('profile needs a target and a scenario'));
+    $dir = fixture_dir($args[0] ?? fail('profile needs a target and a scenario'));
     $scenario = $args[1] ?? fail('profile needs a scenario: a page name or "build"');
     $m = manifest($dir);
     if ($scenario === 'build') {
@@ -699,36 +778,14 @@ function php(string $dir, bool $fileCache = true): array
  */
 function child(string $dir, array $script, bool $strict = true, array $env = []): array
 {
-    $timeout = (int) (getenv('BENCH_TIMEOUT') ?: 900);
     $env = [...getenv(), 'BENCH_CHILD' => json_encode(php($dir)), 'PHP_BINARY' => php_wrapper($dir), ...$env];
-    $proc = proc_open([...php($dir), ...$script], [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes, $dir, $env);
-    stream_set_blocking($pipes[1], false);
-    stream_set_blocking($pipes[2], false);
-    // hrtime() doesn't advance while the machine is asleep, so a laptop that naps mid-run isn't taken for a hang
-    [$out, $err, $deadline, $timedOut] = ['', '', hrtime(true) + $timeout * 1e9, false];
-    while (true) {
-        $out .= stream_get_contents($pipes[1]);
-        $err .= stream_get_contents($pipes[2]);
-        $status = proc_get_status($proc);
-        if (! $status['running']) {
-            break;
-        }
-        if (hrtime(true) > $deadline) {
-            $timedOut = true;
-            // the script and anything it started
-            exec('pkill -9 -P '.(int) $status['pid'].' 2>/dev/null');
-            proc_terminate($proc, 9);
-            break;
-        }
-        usleep(20000);
-    }
-    $out .= stream_get_contents($pipes[1]);
-    $err .= stream_get_contents($pipes[2]);
-    $code = $timedOut ? 124 : ($status['running'] ? proc_close($proc) : $status['exitcode']);
+    [$code, $out, $err, $timedOut] = run_process([...php($dir), ...$script], $dir, $env, true);
     $lines = array_filter(explode("\n", trim($out)));
     $data = json_decode((string) end($lines), true);
     if ($timedOut) {
-        $message = implode(' ', $script).' in '.basename($dir)." was still running after {$timeout} s and was stopped. That usually means the code under test is looping. (BENCH_TIMEOUT sets the limit.)";
+        // stopped dead, so nothing it had changed was put back
+        is_file("$dir/bench/manifest.json") && restore_fixture($dir);
+        $message = implode(' ', $script).' in '.basename($dir).' was still running after '.bench_timeout().' s and was stopped. That usually means the code under test is looping. (BENCH_TIMEOUT sets the limit.)';
         $strict && fail($message);
 
         return ['exit' => 124, 'timed_out' => true, 'error' => $message];
@@ -765,11 +822,67 @@ function php_wrapper(string $dir): string
 
 function sh(array $command, ?string $cwd = null, bool $strict = true): void
 {
-    $proc = proc_open($command, [1 => STDERR, 2 => STDERR], $pipes, $cwd);
-    $code = proc_close($proc);
+    [$code, , , $timedOut] = run_process($command, $cwd, null, false);
+    $timedOut && fail(implode(' ', $command).' was still running after '.bench_timeout().' s and was stopped (BENCH_TIMEOUT sets the limit)');
     if ($strict && $code !== 0) {
         fail(implode(' ', $command)." failed (exit $code)");
     }
+}
+
+function bench_timeout(): int
+{
+    return (int) (getenv('BENCH_TIMEOUT') ?: 900);
+}
+
+/**
+ * Run a command to the end or to the deadline, whichever comes first:
+ * [exit code, stdout, stderr, whether it was stopped]. Without $capture its
+ * output goes to this process's stderr instead.
+ */
+function run_process(array $command, ?string $cwd, ?array $env, bool $capture): array
+{
+    $proc = proc_open($command, $capture ? [1 => ['pipe', 'w'], 2 => ['pipe', 'w']] : [1 => STDERR, 2 => STDERR], $pipes, $cwd, $env);
+    is_resource($proc) || fail("couldn't start ".implode(' ', $command));
+    array_map(fn ($pipe) => stream_set_blocking($pipe, false), $pipes);
+    // hrtime() doesn't advance while the machine is asleep, so a laptop that naps mid-run isn't taken for a hang
+    [$out, $err, $deadline, $timedOut] = ['', '', hrtime(true) + bench_timeout() * 1e9, false];
+    while (true) {
+        if ($capture) {
+            $out .= stream_get_contents($pipes[1]);
+            $err .= stream_get_contents($pipes[2]);
+        }
+        $status = proc_get_status($proc);
+        if (! $status['running']) {
+            break;
+        }
+        if (hrtime(true) > $deadline) {
+            $timedOut = true;
+            kill_tree($status['pid']);
+            break;
+        }
+        usleep(20000);
+    }
+    if ($capture) {
+        $out .= stream_get_contents($pipes[1]);
+        $err .= stream_get_contents($pipes[2]);
+    }
+    $code = $status['running'] ? proc_close($proc) : $status['exitcode'];
+
+    return [$timedOut ? 124 : $code, $out, $err, $timedOut];
+}
+
+/** Stop a process and everything it started, however many levels down (parallel warm workers, a script's own children). */
+function kill_tree(int $pid): void
+{
+    $all = [$pid];
+    for ($i = 0; $i < count($all); $i++) {
+        // frozen first, so it can't start anything while its children are being listed
+        exec('kill -STOP '.$all[$i].' 2>/dev/null');
+        $children = [];
+        exec('pgrep -P '.$all[$i].' 2>/dev/null', $children);
+        array_push($all, ...array_map('intval', $children));
+    }
+    exec('kill -9 '.implode(' ', $all).' 2>/dev/null');
 }
 
 function target_dir(string $name): string

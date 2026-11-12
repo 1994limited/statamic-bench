@@ -65,6 +65,8 @@ bin/bench generate stock --size=small --assets=20000    # more assets in the con
 
 Targets you compare must hold the same content; `compare`, `check` and `octane` refuse to run otherwise. That's checked against a fingerprint of the files the generator wrote, not only against what it was asked for.
 
+The checks change content, because that is what they test, and put it back through Statamic, which may write the same data in another order or be stopped half way. So each target keeps a copy of what the generator wrote (`bench/pristine`), and every command that reads the content starts and ends by making sure the files are that, byte for byte, putting them back if they aren't.
+
 What's in it, and why:
 
 - **Pages**: a structured collection with a page builder (a Replicator with 14 block types, one nested), in English and French. The French pages are localisations that override two fields and inherit the rest from their origin.
@@ -128,7 +130,7 @@ Useful flags: `--only=home,article`, `--skip=build,cold,save`, `--r=20` for more
 Two more that apply to every command:
 
 - `--memory-limit=512M` runs every PHP process under that limit, the workers of a parallel build included. Without it the limit is 8 GB, which no server has. A change that only works with unlimited memory looks fine until it's deployed.
-- `--timeout=300` is how long any one bench process may run, in seconds (900 by default). A process that's still going is stopped and the run fails, saying so. Performance changes have made Statamic loop before; a bench that hangs has told nobody anything.
+- `--timeout=300` is how long any one process the bench starts may run, in seconds (900 by default), Composer and the generator included. A process that's still going is stopped, along with anything it started, the content is put back, and the run fails, saying so. Performance changes have made Statamic loop before; a bench that hangs has told nobody anything.
 
 The Control Panel is switched off for every scenario but its own, and its licence check is answered locally, so no bench process makes a request to anywhere.
 
@@ -222,7 +224,7 @@ Set `BENCH_PHP=/path/to/php` to choose the PHP binary.
 ```
 bin/bench            the command
 app/                 copied into every target
-  bench/             generate.php, generate_awkward.php, request.php, build.php, query.php, save.php, checks.php, worker.php, queue.php, dump.php, edit.php
+  bench/             generate.php, generate_awkward.php, fingerprint.php, request.php, build.php, query.php, save.php, checks.php, worker.php, queue.php, dump.php, edit.php
   resources/views/   the site's templates
   routes/web.php     two bench-only routes used by the Octane checks, and the awkward content's computed values
 tools/               the cachegrind summary script

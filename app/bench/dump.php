@@ -103,6 +103,8 @@ foreach (Collection::all() as $collection) {
     foreach ([...$catalogue['*'], ...($catalogue[$collection->handle()] ?? [])] as $name) {
         try {
             $items = $canonical($store->index($name)->items()->all());
+            // which entry comes first is the queries' business, below; here it's what each entry's value is
+            ksort($items);
             $indexes["{$collection->handle()}/$name"] = [count($items), md5(json_encode($items, JSON_PRESERVE_ZERO_FRACTION))];
         } catch (Throwable $e) {
             $indexes["{$collection->handle()}/$name"] = get_class($e);

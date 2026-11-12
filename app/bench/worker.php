@@ -210,8 +210,8 @@ $c->check('an entry renamed by another process is at its new URL, and gone from 
 });
 
 $c->check('an entry deleted by another process is gone on the worker\'s next request', function () use ($get) {
-    $made = bench_child(['bench/edit.php', '--create=articles:made-to-be-deleted']);
     try {
+        $made = bench_child(['bench/edit.php', '--create=articles:made-to-be-deleted']);
         [$before] = $get($made['url']);
         bench_child(['bench/edit.php', '--id=bench-created', '--delete']);
         [$after] = $get($made['url']);

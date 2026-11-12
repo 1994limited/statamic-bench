@@ -92,8 +92,8 @@ $c->check('an entry renamed by another process has its new URL in the next job',
 });
 
 $c->check('an entry deleted by another process is gone in the next job', function () use ($nextJob) {
-    bench_child(['bench/edit.php', '--create=articles:made-to-be-deleted']);
     try {
+        bench_child(['bench/edit.php', '--create=articles:made-to-be-deleted']);
         $nextJob();
         $before = Entry::find('bench-created') !== null;
         bench_child(['bench/edit.php', '--id=bench-created', '--delete']);

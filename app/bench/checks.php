@@ -291,7 +291,9 @@ if ($a = $m['awkward'] ?? null) {
             ?? bench_differs('drafts', ['draft', 'draft'], $status('draft'))
             ?? bench_differs('times from file names', ['2020-03-08 01:30:00', '2020-11-01 01:30:59'], $dates)
             ?? bench_differs('scheduled or draft entries among the published', [], array_values(array_intersect($listed, [...$a['notices']['scheduled'], ...$a['notices']['draft']])))
-            ?? bench_differs('two entries with the same date and slug', 2, count(array_filter(array_map(fn ($id) => Entry::find($id), $a['notices']['colliding']))));
+            // 2021-05-05.same-slug.md and 2021-05-05.same-slug.1.md: two entries, and the suffix is no part of the slug
+            ?? bench_differs('two entries with the same date and slug', [['2021-05-05', 'same-slug'], ['2021-05-05', 'same-slug']],
+                array_map(fn ($id) => ($entry = Entry::find($id)) ? [$entry->date()->format('Y-m-d'), $entry->slug()] : null, $a['notices']['colliding']));
     });
 
     $c->check('a one-level orderable collection follows its tree, with an entry the tree leaves out at the end', function () use ($a) {
@@ -319,7 +321,16 @@ if ($a = $m['awkward'] ?? null) {
         }
         $first = array_key_first($a['keywords']['busiest']);
 
-        return bench_differs('French title of a term', 'Mot-clé '.(int) substr($first, 3, 4), Statamic\Facades\Term::find("keywords::$first")->in('fr')->title());
+        return bench_differs('terms in the taxonomy', $a['keywords']['terms'], Statamic\Facades\Term::query()->where('taxonomy', 'keywords')->where('site', 'en')->count())
+            ?? bench_differs('French title of a term', 'Mot-clé '.(int) substr($first, 3, 4), Statamic\Facades\Term::find("keywords::$first")->in('fr')->title());
+    });
+
+    $c->check('an entry of a megabyte or more holds every paragraph it was written with', function () use ($a) {
+        $blob = Entry::find($a['big']['id'])?->get('blob');
+
+        return bench_differs('paragraphs', $a['big']['paragraphs'], is_array($blob) ? count($blob) : null)
+            ?? bench_differs('their contents', $a['big']['hash'], md5(json_encode($blob)))
+            ?? ($a['big']['bytes'] >= 1048576 ? null : "the file is only {$a['big']['bytes']} bytes");
     });
 
     $c->check('a relation across sites gives the entry\'s version in this site, and one to a missing entry is left out', function () use ($a) {
@@ -383,7 +394,7 @@ if ($a = $m['awkward'] ?? null) {
         $assets = Statamic\Facades\Asset::query()->where('container', 'assets');
 
         return bench_differs('assets', $a['assets'], $assets->count())
-            ?? bench_differs('in one library folder', 50, Statamic\Facades\Asset::query()->where('container', 'assets')->where('folder', 'library/001')->count());
+            ?? bench_differs('in one library folder', $a['assets_in_library_001'], Statamic\Facades\Asset::query()->where('container', 'assets')->where('folder', 'library/001')->count());
     });
 }
 

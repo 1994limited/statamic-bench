@@ -185,12 +185,8 @@ $raw('content/collections/notes/en/duplicate-b.md', "---\nid: $duplicate\ntitle:
 
 // one entry far bigger than the rest
 $big = $g->uuid();
-writeEntry("$root/content/collections/notes/en/big.md", [
-    'id' => $big,
-    'title' => 'One very large entry',
-    'weight' => 20,
-    'blob' => array_map(fn ($i) => ['type' => 'paragraph', 'content' => [['type' => 'text', 'text' => $g->sentence(70)]]], range(1, $size === 'micro' ? 600 : 3000)),
-]);
+$blob = array_map(fn ($i) => ['type' => 'paragraph', 'content' => [['type' => 'text', 'text' => $g->sentence(70)]]], range(1, 3000));
+writeEntry("$root/content/collections/notes/en/big.md", ['id' => $big, 'title' => 'One very large entry', 'weight' => 20, 'blob' => $blob]);
 
 // relations: across sites, to an entry that doesn't exist, and a localisation
 $french[$quoted] = $g->uuid();
@@ -308,7 +304,7 @@ $awkward = [
     'integer_id' => 4242,
     'numeric_string_id' => $numericId,
     'duplicate_id' => $duplicate,
-    'big_id' => $big,
+    'big' => ['id' => $big, 'paragraphs' => count($blob), 'hash' => md5(json_encode($blob)), 'bytes' => filesize("$root/content/collections/notes/en/big.md")],
     'nested' => [$nestedA, $nestedB],
     'french_note' => ['id' => $french[$quoted], 'origin' => $quoted, 'see_also_resolves_to' => $french[$fixed['contact']]],
     'broken_relation' => ['id' => $broken, 'missing' => $missing, 'present' => $nestedB],
@@ -328,11 +324,14 @@ $awkward = [
         'at_or_over_threshold' => array_sum(array_filter($perAuthor, fn ($n) => $n >= $threshold)),
     ],
     'keywords' => [
-        'terms' => count($keywords),
+        // every term with a file, and the ones that exist only because an entry mentions them
+        'terms' => count($keywords) + count($usedImplicit),
         'busiest' => array_slice($keywordUse, 0, 3, true),
         'implicit' => $usedImplicit ? [$usedImplicit[0] => $keywordUse[$usedImplicit[0]]] : [],
     ],
     'assets' => $cfg['assets'],
+    // past the first 40 they are in folders of fifty; this is how many landed in the second
+    'assets_in_library_001' => max(0, min(100, $cfg['assets']) - 50),
 ];
 // the notes with expectations, the mixed ones, and four more: the integer id, one of the duplicates, the big one, the French one
 $awkward['note_count'] = count($notes) + count($mixed) + 4;

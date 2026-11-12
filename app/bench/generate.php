@@ -21,6 +21,7 @@
  */
 
 require __DIR__.'/../vendor/autoload.php';
+require __DIR__.'/fingerprint.php';
 
 use Random\Engine\Mt19937;
 use Random\Randomizer;
@@ -131,7 +132,7 @@ writeYaml("$root/resources/blueprints/taxonomies/tags/tag.yaml", ['title' => 'Ta
 // (Statamic makes those up from the entries that mention them).
 $keywords = [];
 if ($cfg['awkward']) {
-    for ($i = 0; $i < ($size === 'micro' ? 200 : 1000); $i++) {
+    for ($i = 0; $i < 1000; $i++) {
         $keywords[] = $slug = sprintf('kw-%04d-%s', $i, WORDS[$i % count(WORDS)]);
         writeYaml("$root/content/taxonomies/keywords/$slug.yaml", ['title' => 'Keyword '.$i, 'localizations' => ['fr' => ['title' => 'Mot-clé '.$i]]]);
     }
@@ -556,8 +557,9 @@ $manifest = [
         'cp_edit_page_builder' => ['/cp/collections/pages/entries/'.$fixed['about'], false],
         'cp_page_tree' => ['/cp/collections/pages', false],
         'cp_assets' => ['/cp/assets/browse/folders/assets', true],
+        // the second folder of fifty, when there are enough assets to fill some of it
+        ...($cfg['awkward'] && $cfg['assets'] > 50 ? ['cp_assets_folder' => ['/cp/assets/browse/folders/assets/library/001', true]] : []),
         ...($cfg['awkward'] ? [
-            'cp_assets_folder' => ['/cp/assets/browse/folders/assets/library/001', true],
             'cp_listing_mixed' => ['/cp/collections/notes/entries?sort=weight&order=desc&perPage=50', true],
         ] : []),
     ],
@@ -572,7 +574,7 @@ $manifest = [
     'user' => 'bench@example.com',
     'awkward' => $awkward,
     // what was actually written, so two targets can be told apart even when they were asked for the same thing
-    'fingerprint' => fingerprint($root, ['content', 'resources/blueprints', 'public/assets', 'users']),
+    'fingerprint' => bench_fingerprint($root),
 ];
 file_put_contents("$root/bench/manifest.json", json_encode($manifest, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_PRESERVE_ZERO_FRACTION)."\n");
 
@@ -775,23 +777,6 @@ function writeEntry(string $path, array $data): void
 }
 
 /** A hash of every file under the given directories, by path and contents. */
-function fingerprint(string $root, array $dirs): string
-{
-    $hash = hash_init('xxh128');
-    foreach ($dirs as $dir) {
-        $files = [];
-        $it = new RecursiveIteratorIterator(new RecursiveDirectoryIterator("$root/$dir", FilesystemIterator::SKIP_DOTS));
-        foreach ($it as $f) {
-            $files[] = $f->getPathname();
-        }
-        sort($files);
-        foreach ($files as $file) {
-            hash_update($hash, substr($file, strlen($root)).':'.hash_file('xxh128', $file)."\n");
-        }
-    }
-
-    return hash_final($hash);
-}
 
 function rrmdir(string $dir): void
 {
