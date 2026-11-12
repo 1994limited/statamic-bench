@@ -92,6 +92,8 @@ for ($i = 0; $i < $cfg['assets']; $i++) {
         'mime_type' => 'image/png',
         'duration' => null,
     ]);
+    // the file is as old as its metadata says, whichever of the two a version of Statamic goes by
+    touch("$root/public/assets/$folder$name", T0 + $i);
     if ($i < 40) {
         $assets[] = $name;
     }
@@ -543,6 +545,20 @@ $manifest = [
         'person' => [$personUrl, 200],
         'not_found' => ['/no-such-page', 404],
         ...$awkwardPages,
+    ],
+    // Control Panel requests, signed in as the bench user: scenario => [url, asks for JSON]
+    'cp' => [
+        'cp_collections' => ['/cp/collections', false],
+        'cp_listing' => ['/cp/collections/articles/entries?sort=title&order=asc&page=2&perPage=25', true],
+        'cp_listing_search' => ['/cp/collections/articles/entries?search=amber&perPage=25', true],
+        'cp_edit_form' => ['/cp/collections/articles/entries/'.$ids['articles'][(int) (0.37 * ($cfg['articles'] - 1))], false],
+        'cp_edit_page_builder' => ['/cp/collections/pages/entries/'.$fixed['about'], false],
+        'cp_page_tree' => ['/cp/collections/pages', false],
+        'cp_assets' => ['/cp/assets/browse/folders/assets', true],
+        ...($cfg['awkward'] ? [
+            'cp_assets_folder' => ['/cp/assets/browse/folders/assets/library/001', true],
+            'cp_listing_mixed' => ['/cp/collections/notes/entries?sort=weight&order=desc&perPage=50', true],
+        ] : []),
     ],
     'save' => [
         'update_ids' => array_map(fn ($k) => $ids['articles'][($k * 7 + 1) % $cfg['articles']], range(0, 19)),

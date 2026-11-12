@@ -63,6 +63,12 @@ $argv = $_SERVER['argv'];
 array_shift($argv);
 $command = array_shift($argv) ?? 'help';
 [$args, $opts] = parse_args($argv);
+if (isset($opts['memory-limit'])) {
+    putenv('BENCH_MEMORY_LIMIT='.$opts['memory-limit']);
+}
+if (isset($opts['timeout'])) {
+    putenv('BENCH_TIMEOUT='.(int) $opts['timeout']);
+}
 
 try {
     match ($command) {
@@ -203,11 +209,11 @@ function cmd_list(): void
     foreach (glob(TARGETS.'/*', GLOB_ONLYDIR) as $dir) {
         $t = load_target($dir);
         $m = manifest($dir);
-        printf("%-16s statamic/cms %-12s %s%s  content: %s (seed %d)\n", $t['name'], target_version($dir),
-            $t['src'] ? "src {$t['src']} " : '', $t['patches'] ? count($t['patches']).' patch(es)' : '', $m['config']['size'], $m['config']['seed']);
+        printf("%-16s statamic/cms %-12s %s%s  content: %s%s (seed %d)\n", $t['name'], target_version($dir),
+            $t['src'] ? "src {$t['src']} " : '', $t['patches'] ? count($t['patches']).' patch(es)' : '', $m['config']['size'], ($m['config']['awkward'] ?? false) ? ' + awkward' : '', $m['config']['seed']);
     }
     if (isset($m)) {
-        echo "\nscenarios: build, cold, ".implode(', ', array_keys($m['pages'])).", save\n";
+        echo "\nscenarios: build, parallel_build, cold_query, cold, ".implode(', ', [...array_keys($m['pages']), ...array_keys($m['cp'] ?? [])]).", save\n";
     }
 }
 
@@ -221,6 +227,9 @@ function cmd_run(array $args, array $opts): void
         fn ($name, $s) => [$name, ms(median($s['ms'])), ms(min($s['ms'])), ms(max($s['ms'])), isset($s['boot_ms']) ? ms(median($s['boot_ms'])) : '', sprintf('%.1f', max($s['peak_mem_mb']))],
         array_keys($result['scenarios']), $result['scenarios']
     ));
+    if ($fell = $result['scenarios']['parallel_build']['fell_back'] ?? 0) {
+        say("parallel_build: {$fell} of ".count($result['scenarios']['parallel_build']['ms']).' builds fell back to the ordinary build, so they did not run in parallel: '.$result['scenarios']['parallel_build']['why']);
+    }
     $out = $opts['out'] ?? RESULTS.'/'.basename($dir).'-'.date('Ymd-His').'.json';
     @mkdir(dirname($out), 0777, true);
     file_put_contents($out, json_encode($result, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES)."\n");
@@ -251,6 +260,25 @@ function run_target(string $dir, array $opts, bool $quiet = false): array
             $log('.');
         }
     }
+    if ($wanted('parallel_build')) {
+        // the same build with Statamic's parallel warming switched on; it quietly does the ordinary build instead if a worker fails
+        for ($i = 0; $i < min(3, $r); $i++) {
+            $sample = child($dir, ['bench/build.php'], true, ['STATAMIC_STACHE_PARALLEL_WARMING' => 'true', 'LOG_CHANNEL' => 'stderr', 'LOG_LEVEL' => 'warning']);
+            $add('parallel_build', $sample);
+            if (str_contains($GLOBALS['child_stderr'] ?? '', 'falling back to sequential')) {
+                $scenarios['parallel_build']['fell_back'] = ($scenarios['parallel_build']['fell_back'] ?? 0) + 1;
+                $scenarios['parallel_build']['why'] ??= trim(preg_replace('/\s+/', ' ', substr($GLOBALS['child_stderr'], 0, 400)));
+            }
+            $log('.');
+        }
+    }
+    if ($wanted('cold_query')) {
+        // nothing built: one listing query, timed on its own
+        for ($i = 0; $i < min(3, $r); $i++) {
+            $add('cold_query', child($dir, ['bench/query.php']));
+            $log('.');
+        }
+    }
     if ($wanted('cold')) {
         // nothing cached at all: the request also builds the Stache and compiles the views
         for ($i = 0; $i < min(2, $r); $i++) {
@@ -273,6 +301,21 @@ function run_target(string $dir, array $opts, bool $quiet = false): array
             $log('.');
         }
     }
+    $cp = array_filter($m['cp'] ?? [], fn ($name) => $wanted($name), ARRAY_FILTER_USE_KEY);
+    if ($cp) {
+        child($dir, ['bench/build.php']);
+        foreach ([1, 2] as $round) {
+            foreach ($cp as [$url, $json]) {
+                cp_request($dir, $m, $url, $json);
+            }
+        }
+        for ($i = 0; $i < $r; $i++) {
+            foreach ($cp as $name => [$url, $json]) {
+                $add($name, cp_request($dir, $m, $url, $json));
+            }
+            $log('.');
+        }
+    }
     if ($wanted('save')) {
         for ($i = 0; $i < min(3, $r); $i++) {
             $add('save', child($dir, ['bench/save.php']));
@@ -290,6 +333,12 @@ function run_target(string $dir, array $opts, bool $quiet = false): array
         'r' => $r,
         'scenarios' => $scenarios,
     ];
+}
+
+/** One Control Panel request, signed in, in its own process. The panel is off for every other scenario. */
+function cp_request(string $dir, array $m, string $url, bool $json, ?string $html = null): array
+{
+    return child($dir, ['bench/request.php', "--url=$url", '--expect=200', "--as={$m['user']}", ...($json ? ['--json'] : []), ...($html ? ["--html=$html"] : [])], true, ['CP_ENABLED' => 'true']);
 }
 
 function cmd_compare(array $args, array $opts): void
@@ -346,9 +395,12 @@ function cmd_check(array $args, array $opts): void
         foreach (manifest($dir)['pages'] as $name => [$url, $status]) {
             child($dir, ['bench/request.php', "--url=$url", "--expect=$status", "--html=$out/".basename($dir)."/$name.html"]);
         }
+        foreach (manifest($dir)['cp'] ?? [] as $name => [$url, $json]) {
+            cp_request($dir, manifest($dir), $url, $json, "$out/".basename($dir)."/$name.html");
+        }
         file_put_contents("$out/".basename($dir).'/stache.json', json_encode(child($dir, ['bench/dump.php']), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
     }
-    foreach ([...array_map(fn ($n) => "$n.html", array_keys(manifest($a)['pages'])), 'stache.json'] as $file) {
+    foreach ([...array_map(fn ($n) => "$n.html", [...array_keys(manifest($a)['pages']), ...array_keys(manifest($a)['cp'] ?? [])]), 'stache.json'] as $file) {
         [$fa, $fb] = ["$out/".basename($a)."/$file", "$out/".basename($b)."/$file"];
         $same = md5_file($fa) === md5_file($fb);
         printf("  %-28s %s\n", $file, $same ? 'identical' : 'DIFFERENT');
@@ -613,7 +665,7 @@ function clean_ini(): bool
 function php(string $dir, bool $fileCache = true): array
 {
     $args = [php_binary(), ...(clean_ini() ? ['-n'] : []),
-        '-d', 'memory_limit=8G', '-d', 'auto_prepend_file=', '-d', 'display_errors=stderr', '-d', 'pcre.jit=1',
+        '-d', 'memory_limit='.(getenv('BENCH_MEMORY_LIMIT') ?: '8G'), '-d', 'auto_prepend_file=', '-d', 'display_errors=stderr', '-d', 'pcre.jit=1',
         '-d', 'opcache.enable_cli=1', '-d', 'opcache.jit=disable', '-d', 'opcache.memory_consumption=256', '-d', 'opcache.max_accelerated_files=30000',
         '-d', 'realpath_cache_size=4096K'];
     if ($fileCache) {
@@ -625,21 +677,76 @@ function php(string $dir, bool $fileCache = true): array
     return $args;
 }
 
-/** Run a bench script in its own PHP process and decode the JSON line it prints. */
-function child(string $dir, array $script, bool $strict = true): array
+/**
+ * Run a bench script in its own PHP process and decode the JSON line it prints.
+ *
+ * Every child has a deadline. A change that makes Statamic loop (it has
+ * happened: a store re-entering its own build) would otherwise sit there
+ * until someone noticed, and a bench that hangs has told nobody anything.
+ */
+function child(string $dir, array $script, bool $strict = true, array $env = []): array
 {
-    $env = [...getenv(), 'BENCH_CHILD' => json_encode(php($dir))];
+    $timeout = (int) (getenv('BENCH_TIMEOUT') ?: 900);
+    $env = [...getenv(), 'BENCH_CHILD' => json_encode(php($dir)), 'PHP_BINARY' => php_wrapper($dir), ...$env];
     $proc = proc_open([...php($dir), ...$script], [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes, $dir, $env);
-    $out = stream_get_contents($pipes[1]);
-    $err = stream_get_contents($pipes[2]);
-    $code = proc_close($proc);
+    stream_set_blocking($pipes[1], false);
+    stream_set_blocking($pipes[2], false);
+    [$out, $err, $deadline, $timedOut] = ['', '', microtime(true) + $timeout, false];
+    while (true) {
+        $out .= stream_get_contents($pipes[1]);
+        $err .= stream_get_contents($pipes[2]);
+        $status = proc_get_status($proc);
+        if (! $status['running']) {
+            break;
+        }
+        if (microtime(true) > $deadline) {
+            $timedOut = true;
+            // the script and anything it started
+            exec('pkill -9 -P '.(int) $status['pid'].' 2>/dev/null');
+            proc_terminate($proc, 9);
+            break;
+        }
+        usleep(20000);
+    }
+    $out .= stream_get_contents($pipes[1]);
+    $err .= stream_get_contents($pipes[2]);
+    $code = $timedOut ? 124 : ($status['running'] ? proc_close($proc) : $status['exitcode']);
     $lines = array_filter(explode("\n", trim($out)));
     $data = json_decode((string) end($lines), true);
+    if ($timedOut) {
+        $message = implode(' ', $script).' in '.basename($dir)." was still running after {$timeout} s and was stopped. That usually means the code under test is looping. (BENCH_TIMEOUT sets the limit.)";
+        $strict && fail($message);
+
+        return ['exit' => 124, 'timed_out' => true, 'error' => $message];
+    }
     if ($strict && ($code !== 0 || ! is_array($data))) {
-        fail(implode(' ', $script).' failed in '.basename($dir)." (exit $code): ".trim(substr($err, 0, 700).' '.substr($out, -300)));
+        $said = trim(substr($err, 0, 700).' '.substr($out, -300));
+        $limit = getenv('BENCH_MEMORY_LIMIT');
+        fail(implode(' ', $script).' failed in '.basename($dir)." (exit $code): ".($said !== '' ? $said : 'it printed nothing'.($limit ? ", which is what PHP does when it runs out of memory before it can report it (this run has --memory-limit=$limit)" : '')));
     }
 
+    // for the callers that need to know what was logged; kept out of the result, which gets compared and written to disk
+    $GLOBALS['child_stderr'] = $err;
+
     return is_array($data) ? $data : ['exit' => $code, 'error' => trim(substr($err, 0, 700).' '.substr($out, -300))];
+}
+
+/**
+ * A stand-in for the PHP binary that carries the bench's settings. Statamic's
+ * parallel warm starts its workers with `php artisan ...`, with no way to pass
+ * them flags; pointing PHP_BINARY here means they run under the same settings,
+ * memory limit included, as the process that started them.
+ */
+function php_wrapper(string $dir): string
+{
+    $wrapper = "$dir/bench/php";
+    $script = "#!/bin/sh\nexec ".implode(' ', array_map('escapeshellarg', php($dir))).' "$@"'."\n";
+    if (! is_file($wrapper) || file_get_contents($wrapper) !== $script) {
+        file_put_contents($wrapper, $script);
+        chmod($wrapper, 0755);
+    }
+
+    return $wrapper;
 }
 
 function sh(array $command, ?string $cwd = null, bool $strict = true): void

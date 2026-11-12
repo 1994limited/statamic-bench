@@ -15,16 +15,23 @@
 $started = hrtime(true);
 require __DIR__.'/lib.php';
 
-$opts = bench_opts(['url:', 'expect:', 'html:', 'clear']);
+$opts = bench_opts(['url:', 'expect:', 'html:', 'clear', 'as:', 'json']);
 isset($opts['url']) || exit("bench: --url is required\n");
 
 $kernel = bench_boot($opts['url']);
 if (isset($opts['clear'])) {
     bench_clear_caches();
 }
+if (isset($opts['as'])) {
+    // signed in, for the Control Panel: the user is put on the guard, as it would be from a session
+    $user = Statamic\Facades\User::findByEmail($opts['as']) ?? exit("bench: no user {$opts['as']}\n");
+    auth()->guard($guard = config('statamic.users.guards.cp', 'web'))->setUser($user);
+    auth()->shouldUse($guard);
+}
 $booted = hrtime(true);
 
-[$status, $html] = bench_request($kernel, $opts['url']);
+// --json: the way the Control Panel's own pages ask for their data
+[$status, $html] = bench_request($kernel, $opts['url'], isset($opts['json']) ? ['HTTP_ACCEPT' => 'application/json', 'HTTP_X_REQUESTED_WITH' => 'XMLHttpRequest'] : []);
 $done = hrtime(true);
 
 if (isset($opts['html'])) {

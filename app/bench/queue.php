@@ -29,6 +29,7 @@ $app = require BENCH_ROOT.'/bootstrap/app.php';
 $app->instance('request', Request::create(BENCH_HOST.'/', 'GET', server: ['argv' => ['artisan', 'queue:work']]));
 $app->make(Illuminate\Contracts\Console\Kernel::class)->bootstrap();
 bench_check_config();
+bench_stay_offline($app);
 
 $m = bench_manifest();
 $c = new BenchChecks;

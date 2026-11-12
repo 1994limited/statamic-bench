@@ -60,6 +60,7 @@ $client = new class implements Client
 $worker = new Worker(new ApplicationFactory(realpath(BENCH_ROOT)), $client);
 $worker->boot();
 bench_check_config();
+bench_stay_offline($worker->application());
 
 $get = function (string $uri) use ($worker, $client): array {
     $client->response = $client->error = null;
