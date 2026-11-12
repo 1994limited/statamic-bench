@@ -262,6 +262,10 @@ function restore_fixture(string $dir): bool
     $fingerprint = manifest($dir)['fingerprint'] ?? null;
     array_map('unlink', glob("$dir/storage/framework/bench-*.json"));
     if (bench_fingerprint($dir) === $fingerprint) {
+        // the same bytes written again still move a file's time, and with it the order Statamic lists it in
+        if (bench_stamp($dir)) {
+            rrmdir("$dir/storage/framework/cache/data");
+        }
         is_dir("$dir/bench/pristine") || keep_pristine($dir);
 
         return false;
@@ -272,6 +276,7 @@ function restore_fixture(string $dir): bool
         sh(['rsync', '-a', '--checksum', '--delete', "$dir/bench/pristine/$path/", "$dir/$path/"]);
     }
     bench_fingerprint($dir) === $fingerprint || fail($again);
+    bench_stamp($dir);
     // the Stache may hold what was there a moment ago
     rrmdir("$dir/storage/framework/cache/data");
 
@@ -307,6 +312,7 @@ function cmd_list(): void
 
 function cmd_run(array $args, array $opts): void
 {
+    warn_if_busy();
     $dir = fixture_dir($args[0] ?? fail('run needs a target name'));
     $result = run_target($dir, $opts);
     print_table(['scenario', 'median ms', 'min', 'max', 'boot ms', 'peak MB'], array_map(
@@ -429,6 +435,7 @@ function cp_request(string $dir, array $m, string $url, bool $json, ?string $htm
 
 function cmd_compare(array $args, array $opts): void
 {
+    warn_if_busy();
     count($args) === 2 || fail('compare needs two target names');
     [$a, $b] = array_map('fixture_dir', $args);
     same_fixture($a, $b);
@@ -836,6 +843,16 @@ function sh(array $command, ?string $cwd = null, bool $strict = true): void
     }
 }
 
+/** Timings taken while the machine is doing something else can't tell a 5% change from nothing. */
+function warn_if_busy(): void
+{
+    $load = sys_getloadavg()[0] ?? 0;
+    $cores = max(1, (int) trim((string) shell_exec('getconf _NPROCESSORS_ONLN 2>/dev/null')));
+    if ($load > max(2, $cores / 4)) {
+        say(sprintf('this machine is busy (load %.1f on %d cores): expect noisy timings, and don\'t trust a small difference', $load, $cores));
+    }
+}
+
 function bench_timeout(): int
 {
     return (int) (getenv('BENCH_TIMEOUT') ?: 900);
@@ -934,6 +951,14 @@ function same_fixture(string $a, string $b): void
 {
     [$ma, $mb] = [manifest($a), manifest($b)];
     ($ma['config'] == $mb['config'] && ($ma['fingerprint'] ?? null) === ($mb['fingerprint'] ?? null)) || fail(sprintf('%s and %s hold different content; run `bin/bench generate` on both with the same --size and --seed', basename($a), basename($b)));
+    // not an error: one target may be configured differently on purpose. But a skeleton that changed
+    // between two setups looks exactly like a change in the code under test.
+    $configs = fn (string $dir) => array_map('md5_file', array_column(array_map(fn ($f) => [substr($f, strlen($dir) + 1), $f], [...glob("$dir/config/*.php"), ...glob("$dir/config/*/*.php")]), 1, 0));
+    [$ca, $cb] = [$configs($a), $configs($b)];
+    $drift = array_keys(array_diff_assoc($ca, $cb) + array_diff_assoc($cb, $ca));
+    if ($drift) {
+        say(sprintf('%s and %s are configured differently (%s). If that isn\'t deliberate, they were set up from different versions of the skeleton: copy the files across, or set both up with the same --skeleton.', basename($a), basename($b), implode(', ', $drift)));
+    }
 }
 
 function edit_config(string $file, string $pattern, string $replacement): void

@@ -63,9 +63,11 @@ bin/bench generate stock --size=small --awkward          # add the awkward conte
 bin/bench generate stock --size=small --assets=20000    # more assets in the container
 ```
 
+`compare`, `check` and `octane` also say when two targets' `config/` files differ, which happens when they were set up from different versions of the skeleton, and `run` and `compare` say when the machine is too busy for small differences to mean anything.
+
 Targets you compare must hold the same content; `compare`, `check` and `octane` refuse to run otherwise. That's checked against a fingerprint of the files the generator wrote, not only against what it was asked for.
 
-The checks change content, because that is what they test, and put it back through Statamic, which may write the same data in another order or be stopped half way. So each target keeps a copy of what the generator wrote (`bench/pristine`), and every command that reads the content starts and ends by making sure the files are that, byte for byte, putting them back if they aren't.
+The checks change content, because that is what they test, and put it back through Statamic, which may write the same data in another order or be stopped half way. Statamic also lists files by modified time, so every content file is given the same time: otherwise two targets generated a minute apart return unordered queries in different orders, which looks exactly like a change in the code under test. So each target keeps a copy of what the generator wrote (`bench/pristine`), and every command that reads the content starts and ends by making sure the files are that, byte for byte, putting them back if they aren't.
 
 What's in it, and why:
 

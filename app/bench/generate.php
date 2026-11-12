@@ -576,6 +576,7 @@ $manifest = [
     // what was actually written, so two targets can be told apart even when they were asked for the same thing
     'fingerprint' => bench_fingerprint($root),
 ];
+bench_stamp($root);
 file_put_contents("$root/bench/manifest.json", json_encode($manifest, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_PRESERVE_ZERO_FRACTION)."\n");
 
 fwrite(STDERR, sprintf("generated %s (seed %d): %s\n", $size, $cfg['seed'], json_encode($manifest['counts'])));
