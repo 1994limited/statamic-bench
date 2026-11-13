@@ -221,6 +221,16 @@ Xdebug slows everything down many times over and charges function calls more tha
 
 Set `BENCH_PHP=/path/to/php` to choose the PHP binary.
 
+## Running on another machine
+
+`tools/remote.sh` does a whole comparison on a fresh Ubuntu machine: it installs PHP and Composer if they're missing, checks out two refs of statamic/cms, builds a target from each, checks their output is identical and compares them.
+
+```bash
+tools/remote.sh 6.x perf/my-branch --head-repo=https://github.com/me/cms.git --noise
+```
+
+`--noise` first compares the base with a second copy of itself, which shows how much two identical targets differ on that machine. Run it before believing a small difference: a VM that shares its CPU with other customers can be far noisier than a quiet laptop (one we tried gave a spread of ±25% between identical targets). `check` doesn't depend on timing, so it's reliable anywhere.
+
 ## Layout
 
 ```
@@ -229,7 +239,7 @@ app/                 copied into every target
   bench/             generate.php, generate_awkward.php, fingerprint.php, request.php, build.php, query.php, save.php, checks.php, worker.php, queue.php, dump.php, edit.php
   resources/views/   the site's templates
   routes/web.php     two bench-only routes used by the Octane checks, and the awkward content's computed values
-tools/               the cachegrind summary script
+tools/               the cachegrind summary script, and remote.sh
 targets.noindex/     the apps (not committed)
 results/             JSON results, rendered HTML, profiles (not committed)
 ```
