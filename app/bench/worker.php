@@ -60,6 +60,7 @@ $client = new class implements Client
 $worker = new Worker(new ApplicationFactory(realpath(BENCH_ROOT)), $client);
 $worker->boot();
 bench_check_config();
+bench_stay_offline($worker->application());
 
 $get = function (string $uri) use ($worker, $client): array {
     $client->response = $client->error = null;
@@ -180,6 +181,64 @@ $c->check('an index first built after another process saved holds the saved valu
     } finally {
         bench_child(['bench/edit.php', "--id={$article['id']}", '--restore']);
     }
+});
+
+$c->check('an entry created by another process has a page on the worker\'s next request', function () use ($get, $articleUrl) {
+    $get($articleUrl);
+    try {
+        $made = bench_child(['bench/edit.php', '--create=articles:made-while-the-worker-ran:Made while the worker was running']);
+        [$status, $html] = $get($made['url']);
+
+        return bench_differs('status of '.$made['url'], 200, $status)
+            ?? (str_contains($html, 'Made while the worker was running') ? null : 'the page does not show the new entry');
+    } finally {
+        bench_child(['bench/edit.php', '--id=bench-created', '--delete']);
+    }
+});
+
+$c->check('an entry renamed by another process is at its new URL, and gone from the old one', function () use ($get, $article, $articleUrl) {
+    $get($articleUrl);
+    try {
+        $renamed = bench_child(['bench/edit.php', "--id={$article['id']}", '--slug=renamed-while-the-worker-ran']);
+        [$new] = $get($renamed['url']);
+        [$old] = $get($articleUrl);
+
+        return bench_differs('status at '.$renamed['url'], 200, $new) ?? bench_differs('status at the old URL', 404, $old);
+    } finally {
+        bench_child(['bench/edit.php', "--id={$article['id']}", '--restore']);
+    }
+});
+
+$c->check('an entry deleted by another process is gone on the worker\'s next request', function () use ($get) {
+    try {
+        $made = bench_child(['bench/edit.php', '--create=articles:made-to-be-deleted']);
+        [$before] = $get($made['url']);
+        bench_child(['bench/edit.php', '--id=bench-created', '--delete']);
+        [$after] = $get($made['url']);
+
+        return bench_differs('status before it was deleted', 200, $before) ?? bench_differs('status after', 404, $after);
+    } finally {
+        bench_child(['bench/edit.php', '--id=bench-created', '--delete']);
+    }
+});
+
+$c->check('after another process renames the page a collection is mounted on, its entries are at the new URLs', function () use ($get, $m, $article, $articleUrl) {
+    $get($articleUrl);
+    try {
+        $urls = bench_child(['bench/edit.php', "--id={$m['mount']['page']}", '--slug=writing', "--urls={$article['id']}"])['urls'];
+        [$new] = $get($urls[$article['id']]);
+        [$old] = $get($articleUrl);
+
+        return bench_differs('the article\'s URL', str_replace('/articles/', '/writing/', $articleUrl), $urls[$article['id']])
+            ?? bench_differs('status at the new URL', 200, $new)
+            ?? bench_differs('status at the old URL', 404, $old);
+    } finally {
+        bench_child(['bench/edit.php', "--id={$m['mount']['page']}", '--restore']);
+    }
+});
+
+$c->check('once everything is put back, the worker serves the article where it was', function () use ($get, $articleUrl) {
+    return bench_differs('status', 200, $get($articleUrl)[0]);
 });
 
 bench_emit([

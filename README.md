@@ -52,13 +52,22 @@ A two-language marketing and content site, written straight to disk as YAML and 
 | `small` (default) | 200 | 60 | 40 | 12 | 23 | 30 |
 | `medium` | 2,000 | 300 | 200 | 30 | 85 | 80 |
 | `large` | 9,000 | 1,500 | 600 | 60 | 247 | 200 |
+| `huge` | 45,000 | 3,000 | 1,500 | 120 | 247 | 400 |
+
+`huge` is about 50,000 entries. It takes minutes to build, so it's for seeing how a cost grows rather than for everyday comparisons.
 
 ```bash
 bin/bench generate stock --size=medium
 bin/bench generate stock --size=small --articles=5000   # override any one count
+bin/bench generate stock --size=small --awkward          # add the awkward content (below)
+bin/bench generate stock --size=small --assets=20000    # more assets in the container
 ```
 
-Targets you compare must hold the same content; `compare`, `check` and `octane` refuse to run otherwise.
+`compare`, `check` and `octane` also say when two targets' `config/` files differ, which happens when they were set up from different versions of the skeleton, and `run` and `compare` say when the machine is too busy for small differences to mean anything.
+
+Targets you compare must hold the same content; `compare`, `check` and `octane` refuse to run otherwise. That's checked against a fingerprint of the files the generator wrote, not only against what it was asked for.
+
+The checks change content, because that is what they test, and put it back through Statamic, which may write the same data in another order or be stopped half way. Statamic also lists files by modified time, so every content file is given the same time: otherwise two targets generated a minute apart return unordered queries in different orders, which looks exactly like a change in the code under test. So each target keeps a copy of what the generator wrote (`bench/pristine`), and every command that reads the content starts and ends by making sure the files are that, byte for byte, putting them back if they aren't.
 
 What's in it, and why:
 
@@ -69,16 +78,37 @@ What's in it, and why:
 - **Globals, 12 categories, tags, 40 assets** with metadata.
 - **65 Antlers templates**, shaped like a real site's: a layout, partials, reusable components (some with slots), one partial per block and per Bard set, paginated listings, taxonomy pages.
 
+### Awkward content
+
+A tidy generated site hides most of what breaks a performance change. `--awkward` adds the content real sites have, on top of any size. Each item is there because something like it got past this bench once, or would have:
+
+- **Hand-written YAML** (the `notes` collection): comments, Windows line endings, anchors and merge keys, flow collections over several lines, block scalars with every chomping indicator, escapes in double quotes, keys that aren't plain identifiers, empty and null values, every scalar type, Unicode. Statamic's own dumper writes none of these, so a parser that's only been fed generated content has never seen them. What each file should hold is worked out with Symfony's parser when the content is generated.
+- **Ids that are numbers** or strings of digits, **two files with the same id**, files with the **same name in different folders**, and **one entry of a megabyte or more**.
+- **Computed values that query their own collection**, declared as indexes the way a site does for a field it filters by. One is on a mounted collection and one on a collection with no mount or structure, because what goes wrong differs.
+- **Drafts, scheduled entries**, dates to the minute and to the second in file names, and two entries that want the same file name.
+- **A one-level orderable collection** with an entry its tree leaves out, **a collection with no route**, and entries that **redirect**.
+- **A taxonomy of a thousand terms** that entries really use, some with no term file, with French titles.
+- **Relations** from a French entry to English ones, and to an entry that doesn't exist.
+- **A six-level chain of pages** and a six-level nav with entries, links, bare titles and a missing entry.
+- **2,000 assets** in folders (`--assets=N` for more). Entries only point at the first 40; the rest are there to be listed, counted and built.
+- **A field holding every type of value** (null, false, true, 0, "0", 1, strings, an empty string), for filters and sorting to disagree about.
+
+Everything in it is something stock Statamic builds without complaint, and nothing in it is rewritten when Statamic reads it, so the fixture stays the same bytes.
+
 ## Scenarios
 
 | scenario | what it does |
 |---|---|
 | `build` | Builds the Stache from nothing in a fresh process (`stache:warm` after a deploy) |
+| `parallel_build` | The same build with Statamic's parallel warming switched on. Reported when it falls back to the ordinary build, which Statamic does quietly if a worker fails |
+| `cold_query` | The first query on a Stache with nothing built, timed alone: a listing of twelve articles by title. A change can make the full build faster and this slower |
 | `cold` | One request for the home page with nothing cached at all |
 | `home`, `page_builder`, `page_simple`, `page_deep`, `page_french` | Pages from the structured collection |
 | `article`, `articles_index`, `articles_page_3`, `category`, `tag` | An article, paginated listings, taxonomy term pages |
 | `product`, `products_index`, `event`, `events_index`, `team_index`, `person` | The other collections |
 | `not_found` | A 404 |
+| `cp_collections`, `cp_listing`, `cp_listing_search`, `cp_edit_form`, `cp_edit_page_builder`, `cp_page_tree`, `cp_assets` | Control Panel requests through the real controllers, signed in as a generated super user: listings as the panel asks for them (JSON), edit forms, the asset browser |
+| `note`, `note_big`, `note_french`, `faq`, `notice_past`, `notice_scheduled`, `notice_draft`, `cp_assets_folder`, `cp_listing_mixed` | With `--awkward` content only |
 | `save` | Updates 5 articles and creates 5 through the API |
 
 Page scenarios run with everything warm, **one PHP process per request**, the way PHP-FPM serves them: statics, singletons and the Stache's in-memory indexes start empty every time, and only what's on disk carries over. Compiled code comes from an opcache file cache, standing in for FPM's shared memory. Booting the app and handling the request are timed separately (`boot ms` and `median ms`).
@@ -99,6 +129,13 @@ save                 170.3  167.6  211.4               8.4
 
 Useful flags: `--only=home,article`, `--skip=build,cold,save`, `--r=20` for more samples.
 
+Two more that apply to every command:
+
+- `--memory-limit=512M` runs every PHP process under that limit, the workers of a parallel build included. Without it the limit is 8 GB, which no server has. A change that only works with unlimited memory looks fine until it's deployed.
+- `--timeout=300` is how long any one process the bench starts may run, in seconds (900 by default), Composer and the generator included. A process that's still going is stopped, along with anything it started, the content is put back, and the run fails, saying so. Performance changes have made Statamic loop before; a bench that hangs has told nobody anything.
+
+The Control Panel is switched off for every scenario but its own, and its licence check is answered locally, so no bench process makes a request to anywhere.
+
 ## Comparing two versions
 
 ```bash
@@ -115,7 +152,12 @@ Close other work first. A loaded machine can easily move a scenario by 10%.
 bin/bench check stock mine
 ```
 
-Renders every scenario page in both targets and compares the HTML byte for byte (after masking CSRF tokens), then compares what each Stache holds: every entry's URL, status, date, order, origin, parent and data, every term, and every nav and collection tree. Both versions are written to `results/check/`.
+Renders every scenario page and every Control Panel scenario in both targets and compares them byte for byte (after masking CSRF and other per-request tokens), then compares what each Stache holds: every entry's URL, status, date, order, origin, parent and data, every term, and every nav and collection tree. Both versions are written to `results/check/`.
+
+It also compares:
+
+- **a fixed list of indexes** for every collection, by value. Which indexes exist depends on what's been queried, so the same ones are asked for on both sides;
+- **the ids a spread of queries return, in order**: filters on a field that holds every type of value, sorts with ties, statuses, taxonomies, date ranges, pagination, terms and assets. A query that throws is recorded as the exception, so the two versions have to agree on that too.
 
 ## Behaviour checks
 
@@ -129,7 +171,12 @@ These guard things that performance changes have actually broken, or nearly did:
 - **Other processes**: a save in another process is visible to this one, and the other way round.
 - **Localisations**: a localised entry inherits from its origin; changing the origin is tracked and the original still points at the old one; an unsaved origin change doesn't leak into the next read.
 - **URLs**: every entry's URL equals its route worked out by hand, including nested pages, date parts and the Antlers route.
+- **Moved content**: renaming the page a collection is mounted on changes the URL of every entry in that collection, and moving a page changes its children's URLs; both go back when it's undone.
+- **Queue workers**: a long-lived process run the way `queue:work` is, so Statamic's reset between jobs happens. Between jobs another process saves, creates, renames and deletes entries and renames a mount page, and the next job has to see each.
 - **Zero-downtime deploys**: pages render the same after the app's directory is moved, because the Stache was built under a path that no longer exists.
+- **Awkward content** (with `--awkward`): every hand-written file holds what Symfony's parser says it should; number ids are found and keep their type; one duplicate is kept and the other recorded; computed indexes hold the right values, and still do when a query on one is the first thing to touch an unbuilt Stache; statuses, dates, orders, redirects, term counts and relations are what the generator says they are.
+
+Any check that takes ten seconds or more says how long it took.
 
 ## Octane
 
@@ -146,9 +193,11 @@ It reports the time per request in the worker next to a fresh process, memory af
 - a date changed by another process reorders the worker's listing
 - after that process puts things back, the worker gives the HTML it gave at the start
 - request state doesn't carry over (each page knows its own URL)
+- an entry **created** by another process has a page on the worker's next request, one **renamed** is at its new URL and gone from the old, and one **deleted** is gone
+- after another process renames the page a collection is mounted on, its entries are at the new URLs
 - an index first built **after** another process saved holds the saved value. This is the one that catches entries or snapshots cached on a long-lived object: the worker does the cold build, another process saves, then the worker needs an index it hasn't built yet.
 
-Statamic 6.40.0 does not pass all of this on its own: its `Cascade` is a singleton created with the worker's boot request, so in a worker every page gets the home page's `is_homepage` and `segment_1`. That is why the two-target form exists. It only fails when your target does worse than the baseline: a page whose worker HTML differs from the baseline's, or a check the baseline passes and yours doesn't.
+Statamic 6.41.0 does not pass all of this on its own. An entry created by another process is a 404 in a worker that was already running, because a store keeps the list of paths it read first ([statamic/cms#15857](https://github.com/statamic/cms/issues/15857)). And its `Cascade` is a singleton created with the worker's boot request, so in a worker every page gets the home page's `is_homepage` and `segment_1`. That is why the two-target form exists. It only fails when your target does worse than the baseline: a page whose worker HTML differs from the baseline's, or a check the baseline passes and yours doesn't.
 
 ## Profiling
 
@@ -177,9 +226,9 @@ Set `BENCH_PHP=/path/to/php` to choose the PHP binary.
 ```
 bin/bench            the command
 app/                 copied into every target
-  bench/             generate.php, request.php, build.php, save.php, checks.php, worker.php, dump.php, edit.php
+  bench/             generate.php, generate_awkward.php, fingerprint.php, request.php, build.php, query.php, save.php, checks.php, worker.php, queue.php, dump.php, edit.php
   resources/views/   the site's templates
-  routes/web.php     two bench-only routes used by the Octane checks
+  routes/web.php     two bench-only routes used by the Octane checks, and the awkward content's computed values
 tools/               the cachegrind summary script
 targets.noindex/     the apps (not committed)
 results/             JSON results, rendered HTML, profiles (not committed)

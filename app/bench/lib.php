@@ -36,8 +36,21 @@ function bench_boot(string $uri = '/'): Kernel
     $app->instance('request', Request::create(BENCH_HOST.$uri));
     $kernel->bootstrap();
     bench_check_config();
+    bench_stay_offline($app);
 
     return $kernel;
+}
+
+/**
+ * The Control Panel asks statamic.com about the licence. A bench has no
+ * business making that request, and a network call in a timed request would
+ * be measuring the network. Every attempt fails at once, as if offline.
+ */
+function bench_stay_offline($app): void
+{
+    $app->bind(Statamic\Licensing\Outpost::class, fn () => new Statamic\Licensing\Outpost(new GuzzleHttp\Client([
+        'handler' => fn ($request) => GuzzleHttp\Promise\Create::rejectionFor(new GuzzleHttp\Exception\ConnectException('the bench makes no outside requests', $request)),
+    ])));
 }
 
 function bench_check_config(): void
@@ -51,9 +64,9 @@ function bench_check_config(): void
 }
 
 /** One request through the kernel, as a web server would send it. */
-function bench_request(Kernel $kernel, string $uri): array
+function bench_request(Kernel $kernel, string $uri, array $server = []): array
 {
-    $request = Request::create(BENCH_HOST.$uri, 'GET');
+    $request = Request::create(BENCH_HOST.$uri, 'GET', server: $server);
     $response = $kernel->handle($request);
     $kernel->terminate($request, $response);
 
@@ -81,6 +94,10 @@ function bench_normalise(string $html): string
 {
     $html = preg_replace('/name="_token" value="[^"]*"/', 'name="_token" value="CSRF"', $html);
     $html = preg_replace('/<meta name="csrf-token" content="[^"]*">/', '<meta name="csrf-token" content="CSRF">', $html);
+    // Control Panel responses carry the time and a few ids made up on the spot
+    // (as JSON, and as JSON inside an HTML attribute)
+    $html = preg_replace('/"(csrfToken|csrf_token|token|nonce)":"[^"]*"/', '"$1":"X"', $html);
+    $html = preg_replace('/&quot;(csrfToken|csrf_token|token|nonce)&quot;:&quot;.*?&quot;/', '&quot;$1&quot;:&quot;X&quot;', $html);
     $html = preg_replace('/[ \t]+$/m', '', $html);
     $html = preg_replace('/\n{2,}/', "\n", $html);
 
@@ -136,12 +153,14 @@ final class BenchChecks
 
     public function check(string $name, callable $test): void
     {
+        $started = hrtime(true);
         try {
             $detail = $test();
-            $this->results[] = ['name' => $name, 'pass' => $detail === null, 'detail' => (string) $detail];
+            $result = ['name' => $name, 'pass' => $detail === null, 'detail' => (string) $detail];
         } catch (Throwable $e) {
-            $this->results[] = ['name' => $name, 'pass' => false, 'detail' => get_class($e).': '.$e->getMessage().' at '.basename($e->getFile()).':'.$e->getLine()];
+            $result = ['name' => $name, 'pass' => false, 'detail' => get_class($e).': '.$e->getMessage().' at '.basename($e->getFile()).':'.$e->getLine()];
         }
+        $this->results[] = $result + ['seconds' => round((hrtime(true) - $started) / 1e9, 1)];
     }
 }
 
