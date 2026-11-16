@@ -116,7 +116,7 @@ Everything in it is something stock Statamic builds without complaint, and nothi
 | `search_paginate` | A search for "amber" on a local index of the articles, with a status and a site where, paginated by 10: what `{{ search:results paginate="10" }}` asks for. One call in a fresh process |
 | `reorder` | Moves the first doc to the end of the `docs` tree and saves it, as dragging in the Control Panel does; every entry's position changes. The order is put back afterwards, untimed |
 | `save` | Updates 5 articles and creates 5 through the API |
-| `static_warm` | `php please static:warm` with the half measure strategy, from an empty static cache, against PHP's built-in server with eight workers. One untimed run first. Fails unless every URL it lists is reported cached (the command itself exits 0 when requests fail); that shows each request succeeded, not what was stored. The server's memory isn't measured |
+| `static_warm` | `php please static:warm` with the half measure strategy, from an empty static cache, against PHP's built-in server with eight workers, run from `public/`. One untimed run first. Before warming, the home page has to come back as a real page; afterwards, every URL the command lists has to be reported cached (it exits 0 when requests fail) and the server's log must hold no PHP warning or error. The server's memory isn't measured |
 
 Page scenarios run with everything warm, **one PHP process per request**, the way PHP-FPM serves them: statics, singletons and the Stache's in-memory indexes start empty every time, and only what's on disk carries over. Compiled code comes from an opcache file cache, standing in for FPM's shared memory. Booting the app and handling the request are timed separately (`boot ms` and `median ms`).
 

@@ -502,8 +502,12 @@ function static_warm(string $dir): array
     $url = "http://127.0.0.1:$port";
     $env = [...getenv(), 'APP_URL' => $url, 'STATAMIC_STATIC_CACHING_STRATEGY' => 'half', 'PHP_CLI_SERVER_WORKERS' => '8',
         'BENCH_CHILD' => json_encode(php($dir)), 'PHP_BINARY' => php_wrapper($dir)];
-    $router = 'vendor/laravel/framework/src/Illuminate/Foundation/resources/server.php';
-    $server = proc_open([...php($dir), '-S', "127.0.0.1:$port", '-t', 'public', $router], [0 => ['file', '/dev/null', 'r'], 1 => ['file', '/dev/null', 'w'], 2 => ['file', '/dev/null', 'w']], $pipes, $dir, $env);
+    // Laravel's router finds index.php in the working directory, so the server runs from public/. (Run from the
+    // app's root, every request is a 200 holding a PHP warning, and static:warm reports each one as cached.)
+    $router = "$dir/vendor/laravel/framework/src/Illuminate/Foundation/resources/server.php";
+    $log = "$dir/storage/logs/bench-server.log";
+    @unlink($log);
+    $server = proc_open([...php($dir), '-S', "127.0.0.1:$port", '-t', "$dir/public", $router], [0 => ['file', '/dev/null', 'r'], 1 => ['file', $log, 'a'], 2 => ['file', $log, 'a']], $pipes, "$dir/public", $env);
     is_resource($server) || fail("couldn't start PHP's built-in server");
     try {
         for ($tries = 0; ! ($probe = @fsockopen('127.0.0.1', $port, $errno, $errstr, 0.2)); $tries++) {
@@ -511,6 +515,10 @@ function static_warm(string $dir): array
             usleep(100000);
         }
         fclose($probe);
+        // the home page has to come back as the page, not as an error that happens to be a 200
+        $home = @file_get_contents("$url/");
+        ($home !== false && str_contains($home, '</html>') && ! preg_match('/<b>(Warning|Fatal error|Notice)<\/b>/', $home))
+            || fail("PHP's built-in server didn't serve the home page: ".substr(trim(strip_tags((string) $home)), 0, 300));
         $please = fn (string ...$args) => run_process([...php($dir), 'please', ...$args, '--no-interaction'], $dir, $env, true);
         [$code, , $err] = $please('static:clear');
         $code === 0 || fail('static:clear failed: '.substr(trim($err), 0, 400));
@@ -522,6 +530,9 @@ function static_warm(string $dir): array
         $lines = array_values(array_filter(explode("\n", $out), fn ($l) => preg_match('#^\s+/#', $l)));
         $bad = array_filter($lines, fn ($l) => ! preg_match('/✓\s*Cached/u', $l));
         ($lines && ! $bad) || fail('static:warm did not cache '.($lines ? count($bad).' of '.count($lines).' pages, e.g. '.trim(reset($bad)) : 'anything: '.substr(trim($out), -400)));
+        // and nothing went wrong on the server's side while it rendered them
+        preg_match('/PHP (Warning|Fatal error|Parse error|Notice):.*/', (string) @file_get_contents($log), $problem)
+            && fail('the server logged a PHP error while warming: '.substr($problem[0], 0, 300));
         $please('static:clear');
 
         return ['ms' => round($ms, 3), 'requests' => count($lines)];
