@@ -460,6 +460,8 @@ function run_target(string $dir, array $opts, bool $quiet = false): array
         }
     }
     if ($wanted('save')) {
+        $fresh();
+        child($dir, ['bench/save.php']);   // untimed: the first save on a target compiles and caches what later saves reuse
         for ($i = 0; $i < $heavy; $i++) {
             $fresh();
             $add('save', child($dir, ['bench/save.php']));
