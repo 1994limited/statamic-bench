@@ -46,13 +46,13 @@ bin/bench setup patched --cms=6.40.0 --patch=fix.patch                     # a p
 
 A two-language marketing and content site, written straight to disk as YAML and Markdown by a seeded generator (`app/bench/generate.php`). The same seed and size always give the same bytes, and the generator never goes through Statamic's API, so the code under test cannot change its own fixture.
 
-| size | articles | products | events | people | pages | tags |
-|---|---|---|---|---|---|---|
-| `micro` | 50 | 15 | 10 | 6 | 16 | 12 |
-| `small` (default) | 200 | 60 | 40 | 12 | 23 | 30 |
-| `medium` | 2,000 | 300 | 200 | 30 | 85 | 80 |
-| `large` | 9,000 | 1,500 | 600 | 60 | 247 | 200 |
-| `huge` | 45,000 | 3,000 | 1,500 | 120 | 247 | 400 |
+| size | articles | products | events | people | pages | docs | tags |
+|---|---|---|---|---|---|---|---|
+| `micro` | 50 | 15 | 10 | 6 | 16 | 20 | 12 |
+| `small` (default) | 200 | 60 | 40 | 12 | 23 | 100 | 30 |
+| `medium` | 2,000 | 300 | 200 | 30 | 85 | 1,000 | 80 |
+| `large` | 9,000 | 1,500 | 600 | 60 | 247 | 2,000 | 200 |
+| `huge` | 45,000 | 3,000 | 1,500 | 120 | 247 | 5,000 | 400 |
 
 `huge` is about 50,000 entries. It takes minutes to build, so it's for seeing how a cost grows rather than for everyday comparisons.
 
@@ -74,6 +74,7 @@ What's in it, and why:
 - **Pages**: a structured collection with a page builder (a Replicator with 14 block types, one nested), in English and French. The French pages are localisations that override two fields and inherit the rest from their origin.
 - **Articles**: dated, mounted on the `/articles` page, Bard content with four set types, an author, two taxonomies, related articles.
 - **Products, events, people**: grids, assets, entry relationships. Events use `/events/{year}/{month}/{slug}`; people use `/team/{{ role | slugify }}/{{ slug }}`, a route that needs Antlers to build.
+- **Docs**: a flat, orderable collection, for the `reorder` scenario. It's written last from its own random stream, so the rest of the site is the same bytes it was before docs existed.
 - **Navigation**: a three-level main nav (155 nodes) and a footer nav, with per-node fields. One branch follows a real page and its ancestors so `is_current` and `is_parent` have something to match.
 - **Globals, 12 categories, tags, 40 assets** with metadata.
 - **65 Antlers templates**, shaped like a real site's: a layout, partials, reusable components (some with slots), one partial per block and per Bard set, paginated listings, taxonomy pages.
@@ -109,7 +110,13 @@ Everything in it is something stock Statamic builds without complaint, and nothi
 | `not_found` | A 404 |
 | `cp_collections`, `cp_listing`, `cp_listing_search`, `cp_edit_form`, `cp_edit_page_builder`, `cp_page_tree`, `cp_assets` | Control Panel requests through the real controllers, signed in as a generated super user: listings as the panel asks for them (JSON), edit forms, the asset browser |
 | `note`, `note_big`, `note_french`, `faq`, `notice_past`, `notice_scheduled`, `notice_draft`, `cp_assets_folder`, `cp_listing_mixed` | With `--awkward` content only |
+| `query_like`, `query_like_ids` | `where('title', 'like', '%amber%')` on the articles with a warm Stache: the entries fetched, or only their ids (the filtering alone). Run once untimed, then 20 times; the median of those is one sample |
+| `query_latest` | The four newest published articles (`orderBy('date', 'desc')->limit(4)`), the same way |
+| `query_like_first`, `query_latest_first` | The same queries as the first call in a fresh process, so loading the indexes they need from the cache is in the time: what a request pays |
+| `search_paginate` | A search for "amber" on a local index of the articles, with a status and a site where, paginated by 10: what `{{ search:results paginate="10" }}` asks for. One call in a fresh process |
+| `reorder` | Moves the first doc to the end of the `docs` tree and saves it, as dragging in the Control Panel does; every entry's position changes. The order is put back afterwards, untimed |
 | `save` | Updates 5 articles and creates 5 through the API |
+| `static_warm` | `php please static:warm` with the half measure strategy, from an empty static cache, against PHP's built-in server with eight workers. One untimed run first. Fails unless every URL it lists is reported cached (the command itself exits 0 when requests fail); that shows each request succeeded, not what was stored. The server's memory isn't measured |
 
 Page scenarios run with everything warm, **one PHP process per request**, the way PHP-FPM serves them: statics, singletons and the Stache's in-memory indexes start empty every time, and only what's on disk carries over. Compiled code comes from an opcache file cache, standing in for FPM's shared memory. Booting the app and handling the request are timed separately (`boot ms` and `median ms`).
 
@@ -127,7 +134,9 @@ save                 170.3  167.6  211.4               8.4
 
 (Statamic 6.40.0, `small`, PHP 8.5, an M-series Mac. Your numbers will differ; only compare numbers taken on the same machine in the same session.)
 
-Useful flags: `--only=home,article`, `--skip=build,cold,save`, `--r=20` for more samples.
+`reorder`, `save` and `static_warm` start every sample from the content as generated and a freshly built Stache, because the code under test writes content and may write it back differently. Every sample records the load average when it finished, and the query, search, reorder and warm scenarios record what they found (counts and a hash of the ids), so two versions can be shown to have given the same answer.
+
+Useful flags: `--only=home,article`, `--skip=build,cold,save`, `--r=20` for more samples, `--heavy=7` for more samples of the long scenarios (builds, saves, reorders; 3 by default), `--warms=3` for more `static:warm` runs (2 by default).
 
 Two more that apply to every command:
 

@@ -48,12 +48,15 @@ statamic-bench
       computed values that query, number ids, duplicates, scheduled entries, a thousand terms,
       relations across sites, deep trees, a couple of thousand assets. `huge` is 50,000 entries.
 
-  bin/bench run <target> [--r=10] [--only=home,article] [--skip=build,cold,save] [--out=file.json]
+  bin/bench run <target> [--r=10] [--heavy=3] [--warms=2] [--only=home,article] [--skip=build,cold,save] [--out=file.json]
       Time the scenarios: the Stache build (and with parallel warming), the first query and the
       first request with nothing cached, each page and Control Panel request with everything
-      warm (one PHP process per request, like PHP-FPM), and entry saves.
+      warm (one PHP process per request, like PHP-FPM), single Stache queries and a paginated
+      search, reordering a structured collection, entry saves, and static:warm against PHP's
+      built-in server. --heavy is how many samples the long scenarios (builds, saves, reorders)
+      take (default 3); --warms is how many static:warm runs (default the same as --heavy).
 
-  bin/bench compare <a> <b> [--rounds=3] [--r=10] [--only=...] [--skip=...]
+  bin/bench compare <a> <b> [--rounds=3] [--r=10] [--heavy=3] [--warms=2] [--only=...] [--skip=...]
       Run both targets in alternating order for some rounds and print the difference.
 
   bin/bench check <a> <b>
@@ -217,7 +220,7 @@ function cmd_generate(array $args, array $opts): void
 {
     $dir = target_dir($args[0] ?? fail('generate needs a target name'));
     $flags = [];
-    foreach (['size', 'seed', 'articles', 'products', 'events', 'people', 'tags', 'assets'] as $k) {
+    foreach (['size', 'seed', 'docs', 'articles', 'products', 'events', 'people', 'tags', 'assets'] as $k) {
         if (isset($opts[$k])) {
             $flags[] = "--$k={$opts[$k]}";
         }
@@ -304,7 +307,7 @@ function cmd_list(): void
             $t['src'] ? "src {$t['src']} " : '', $t['patches'] ? count($t['patches']).' patch(es)' : '', $m['config']['size'], ($m['config']['awkward'] ?? false) ? ' + awkward' : '', $m['config']['seed']);
     }
     if (isset($m)) {
-        echo "\nscenarios: build, parallel_build, cold_query, cold, ".implode(', ', [...array_keys($m['pages']), ...array_keys($m['cp'] ?? [])]).", save\n";
+        echo "\nscenarios: build, parallel_build, cold_query, cold, ".implode(', ', [...array_keys($m['pages']), ...array_keys($m['cp'] ?? [])]).", query_like, query_like_ids, query_latest, search_paginate, reorder, save, static_warm\n";
     }
 }
 
@@ -316,7 +319,7 @@ function cmd_run(array $args, array $opts): void
     $dir = fixture_dir($args[0] ?? fail('run needs a target name'));
     $result = run_target($dir, $opts);
     print_table(['scenario', 'median ms', 'min', 'max', 'boot ms', 'peak MB'], array_map(
-        fn ($name, $s) => [$name, ms(median($s['ms'])), ms(min($s['ms'])), ms(max($s['ms'])), isset($s['boot_ms']) ? ms(median($s['boot_ms'])) : '', sprintf('%.1f', max($s['peak_mem_mb']))],
+        fn ($name, $s) => [$name, ms(median($s['ms'])), ms(min($s['ms'])), ms(max($s['ms'])), isset($s['boot_ms']) ? ms(median($s['boot_ms'])) : '', isset($s['peak_mem_mb']) ? sprintf('%.1f', max($s['peak_mem_mb'])) : ''],
         array_keys($result['scenarios']), $result['scenarios']
     ));
     if ($fell = $result['scenarios']['parallel_build']['fell_back'] ?? 0) {
@@ -337,9 +340,14 @@ function run_target(string $dir, array $opts, bool $quiet = false): array
     $skip = isset($opts['skip']) ? explode(',', $opts['skip']) : [];
     $wanted = fn (string $name) => ! in_array($name, $skip) && (! $only || in_array($name, $only));
     $log = fn (string $s) => $quiet || fwrite(STDERR, $s);
+    // the long scenarios (builds, saves, reorders) take fewer samples than the pages unless asked for more
+    $heavy = max(1, (int) ($opts['heavy'] ?? min(3, $r)));
     $scenarios = [];
     $add = function (string $name, array $sample) use (&$scenarios) {
-        foreach (['ms', 'boot_ms', 'peak_mem_mb'] as $k) {
+        // the load when the sample finished, so busy samples can be found afterwards; and what the scenario
+        // found (counts, ids), so two versions can be shown to have answered the same
+        $sample['load'] = round(sys_getloadavg()[0] ?? 0, 2);
+        foreach (['ms', 'boot_ms', 'peak_mem_mb', 'requests', 'found', 'total', 'ids', 'entries', 'first_after', 'load'] as $k) {
             if (isset($sample[$k])) {
                 $scenarios[$name][$k][] = $sample[$k];
             }
@@ -347,14 +355,14 @@ function run_target(string $dir, array $opts, bool $quiet = false): array
     };
 
     if ($wanted('build')) {
-        for ($i = 0; $i < min(3, $r); $i++) {
+        for ($i = 0; $i < $heavy; $i++) {
             $add('build', child($dir, ['bench/build.php']));
             $log('.');
         }
     }
     if ($wanted('parallel_build')) {
         // the same build with Statamic's parallel warming switched on; it quietly does the ordinary build instead if a worker fails
-        for ($i = 0; $i < min(3, $r); $i++) {
+        for ($i = 0; $i < $heavy; $i++) {
             $sample = child($dir, ['bench/build.php'], true, ['STATAMIC_STACHE_PARALLEL_WARMING' => 'true', 'LOG_CHANNEL' => 'stderr', 'LOG_LEVEL' => 'warning']);
             $add('parallel_build', $sample);
             if (str_contains($GLOBALS['child_stderr'] ?? '', 'falling back to sequential')) {
@@ -366,7 +374,7 @@ function run_target(string $dir, array $opts, bool $quiet = false): array
     }
     if ($wanted('cold_query')) {
         // nothing built: one listing query, timed on its own
-        for ($i = 0; $i < min(3, $r); $i++) {
+        for ($i = 0; $i < $heavy; $i++) {
             $add('cold_query', child($dir, ['bench/query.php']));
             $log('.');
         }
@@ -408,11 +416,65 @@ function run_target(string $dir, array $opts, bool $quiet = false): array
             $log('.');
         }
     }
+    $queries = array_filter([
+        'query_like' => ['bench/queries.php', '--kind=like'],
+        'query_like_ids' => ['bench/queries.php', '--kind=like_ids'],
+        'query_latest' => ['bench/queries.php', '--kind=latest'],
+        // the same queries as the first thing a fresh process asks, so loading the indexes they need is in the time
+        'query_like_first' => ['bench/queries.php', '--kind=like', '--first'],
+        'query_latest_first' => ['bench/queries.php', '--kind=latest', '--first'],
+        'search_paginate' => ['bench/search.php'],
+    ], fn ($name) => $wanted($name), ARRAY_FILTER_USE_KEY);
+    if ($queries) {
+        child($dir, ['bench/build.php']);
+        if (isset($queries['search_paginate'])) {
+            child($dir, ['bench/search.php', '--build']);   // the index, built once and kept
+        }
+        foreach ($queries as $script) {
+            child($dir, $script);
+        }
+        for ($i = 0; $i < $r; $i++) {
+            foreach ($queries as $name => $script) {
+                $add($name, child($dir, $script));
+            }
+            $log('.');
+        }
+    }
+    // Reorders, saves and warms write content (and the code under test may write it back differently), so each
+    // sample starts from the content as generated and a Stache built from it.
+    $fresh = function () use ($dir) {
+        restore_fixture($dir);
+        child($dir, ['bench/build.php']);
+    };
+    if ($wanted('reorder')) {
+        if (($m['counts']['docs'] ?? 0) > 1) {
+            $fresh();
+            child($dir, ['bench/reorder.php']);
+            for ($i = 0; $i < $heavy; $i++) {
+                $fresh();
+                $add('reorder', child($dir, ['bench/reorder.php']));
+                $log('.');
+            }
+        } else {
+            $log("\nreorder skipped: this target's content has no docs collection (run `bin/bench generate` again)\n");
+        }
+    }
     if ($wanted('save')) {
-        for ($i = 0; $i < min(3, $r); $i++) {
+        for ($i = 0; $i < $heavy; $i++) {
+            $fresh();
             $add('save', child($dir, ['bench/save.php']));
             $log('.');
         }
+    }
+    if ($wanted('static_warm')) {
+        $fresh();
+        static_warm($dir);   // untimed: compiles what the server runs, as every other group's first pass does
+        for ($i = 0; $i < max(1, (int) ($opts['warms'] ?? $heavy)); $i++) {
+            $fresh();
+            $add('static_warm', static_warm($dir));
+            $log('.');
+        }
+        restore_fixture($dir);
     }
     $log("\n");
 
@@ -425,6 +487,49 @@ function run_target(string $dir, array $opts, bool $quiet = false): array
         'r' => $r,
         'scenarios' => $scenarios,
     ];
+}
+
+/**
+ * `php please static:warm` with the half measure strategy, against PHP's built-in server with eight workers
+ * (PHP_CLI_SERVER_WORKERS), from an empty static cache. Times the whole command; counts the pages it reports.
+ * The static cache is cleared again afterwards, so no other scenario sees it.
+ */
+function static_warm(string $dir): array
+{
+    $sock = stream_socket_server('tcp://127.0.0.1:0') ?: fail("couldn't find a free port");
+    $port = (int) substr(strrchr(stream_socket_get_name($sock, false), ':'), 1);
+    fclose($sock);
+    $url = "http://127.0.0.1:$port";
+    $env = [...getenv(), 'APP_URL' => $url, 'STATAMIC_STATIC_CACHING_STRATEGY' => 'half', 'PHP_CLI_SERVER_WORKERS' => '8',
+        'BENCH_CHILD' => json_encode(php($dir)), 'PHP_BINARY' => php_wrapper($dir)];
+    $router = 'vendor/laravel/framework/src/Illuminate/Foundation/resources/server.php';
+    $server = proc_open([...php($dir), '-S', "127.0.0.1:$port", '-t', 'public', $router], [0 => ['file', '/dev/null', 'r'], 1 => ['file', '/dev/null', 'w'], 2 => ['file', '/dev/null', 'w']], $pipes, $dir, $env);
+    is_resource($server) || fail("couldn't start PHP's built-in server");
+    try {
+        for ($tries = 0; ! ($probe = @fsockopen('127.0.0.1', $port, $errno, $errstr, 0.2)); $tries++) {
+            $tries < 100 || fail("PHP's built-in server didn't start on port $port");
+            usleep(100000);
+        }
+        fclose($probe);
+        $please = fn (string ...$args) => run_process([...php($dir), 'please', ...$args, '--no-interaction'], $dir, $env, true);
+        [$code, , $err] = $please('static:clear');
+        $code === 0 || fail('static:clear failed: '.substr(trim($err), 0, 400));
+        $t = hrtime(true);
+        [$code, $out, $err, $timedOut] = $please('static:warm');
+        $ms = (hrtime(true) - $t) / 1e6;
+        ($code === 0 && ! $timedOut) || fail('static:warm failed'.($timedOut ? ' (timed out)' : '').': '.substr(trim($err.' '.$out), -600));
+        // static:warm exits 0 even when its requests fail, so every URL it lists has to say it was cached
+        $lines = array_values(array_filter(explode("\n", $out), fn ($l) => preg_match('#^\s+/#', $l)));
+        $bad = array_filter($lines, fn ($l) => ! preg_match('/✓\s*Cached/u', $l));
+        ($lines && ! $bad) || fail('static:warm did not cache '.($lines ? count($bad).' of '.count($lines).' pages, e.g. '.trim(reset($bad)) : 'anything: '.substr(trim($out), -400)));
+        $please('static:clear');
+
+        return ['ms' => round($ms, 3), 'requests' => count($lines)];
+    } finally {
+        $status = proc_get_status($server);
+        $status['running'] && kill_tree($status['pid']);
+        proc_close($server);
+    }
 }
 
 /** One Control Panel request, signed in, in its own process. The panel is off for every other scenario. */
@@ -460,9 +565,10 @@ function cmd_compare(array $args, array $opts): void
         [$ma, $mb] = [median($s[$a]['ms']), median($s[$b]['ms'])];
         $noise = 100 * (mad($s[$a]['ms']) / $ma + mad($s[$b]['ms']) / $mb);
         $diff = 100 * ($mb - $ma) / $ma;
-        [$pa, $pb] = [max($s[$a]['peak_mem_mb']), max($s[$b]['peak_mem_mb'])];
+        // static_warm's memory is the server's, which the bench doesn't see
+        [$pa, $pb] = isset($s[$a]['peak_mem_mb'], $s[$b]['peak_mem_mb']) ? [max($s[$a]['peak_mem_mb']), max($s[$b]['peak_mem_mb'])] : [null, null];
         $rows[] = [$name, ms($ma), ms($mb), sprintf('%+.1f%%', $diff), sprintf('±%.1f%%', $noise), abs($diff) > max(2.0, 2 * $noise) ? ($diff < 0 ? 'faster' : 'SLOWER') : 'same',
-            sprintf('%.1f', $pa), sprintf('%.1f', $pb), sprintf('%+.1f%%', 100 * ($pb - $pa) / $pa)];
+            ...($pa === null ? ['', '', ''] : [sprintf('%.1f', $pa), sprintf('%.1f', $pb), sprintf('%+.1f%%', 100 * ($pb - $pa) / $pa)])];
     }
     echo "\n";
     print_table(['scenario', basename($a).' ms', basename($b).' ms', 'time', 'noise', '', basename($a).' MB', basename($b).' MB', 'memory'], $rows);
@@ -986,7 +1092,7 @@ function mad(array $xs): float
 
 function ms(float $ms): string
 {
-    return $ms >= 1000 ? number_format($ms, 0) : sprintf('%.1f', $ms);
+    return $ms >= 1000 ? number_format($ms, 0) : sprintf($ms < 1 ? '%.2f' : '%.1f', $ms);
 }
 
 function print_table(array $head, array $rows): void

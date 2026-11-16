@@ -28,19 +28,19 @@ use Random\Randomizer;
 use Symfony\Component\Yaml\Yaml;
 
 const SIZES = [
-    'micro' => ['articles' => 50, 'products' => 15, 'events' => 10, 'people' => 6, 'tags' => 12, 'tree' => [3, 2]],
-    'small' => ['articles' => 200, 'products' => 60, 'events' => 40, 'people' => 12, 'tags' => 30, 'tree' => [4, 3]],
-    'medium' => ['articles' => 2000, 'products' => 300, 'events' => 200, 'people' => 30, 'tags' => 80, 'tree' => [6, 4, 2]],
-    'large' => ['articles' => 9000, 'products' => 1500, 'events' => 600, 'people' => 60, 'tags' => 200, 'tree' => [6, 4, 3, 2]],
+    'micro' => ['docs' => 20, 'articles' => 50, 'products' => 15, 'events' => 10, 'people' => 6, 'tags' => 12, 'tree' => [3, 2]],
+    'small' => ['docs' => 100, 'articles' => 200, 'products' => 60, 'events' => 40, 'people' => 12, 'tags' => 30, 'tree' => [4, 3]],
+    'medium' => ['docs' => 1000, 'articles' => 2000, 'products' => 300, 'events' => 200, 'people' => 30, 'tags' => 80, 'tree' => [6, 4, 2]],
+    'large' => ['docs' => 2000, 'articles' => 9000, 'products' => 1500, 'events' => 600, 'people' => 60, 'tags' => 200, 'tree' => [6, 4, 3, 2]],
     // about 50,000 entries: slow to build, so for looking at how costs grow rather than for everyday comparisons
-    'huge' => ['articles' => 45000, 'products' => 3000, 'events' => 1500, 'people' => 120, 'tags' => 400, 'tree' => [6, 4, 3, 2]],
+    'huge' => ['docs' => 5000, 'articles' => 45000, 'products' => 3000, 'events' => 1500, 'people' => 120, 'tags' => 400, 'tree' => [6, 4, 3, 2]],
 ];
 
-$opts = getopt('', ['size:', 'seed:', 'articles:', 'products:', 'events:', 'people:', 'tags:', 'assets:', 'awkward']);
+$opts = getopt('', ['size:', 'seed:', 'docs:', 'articles:', 'products:', 'events:', 'people:', 'tags:', 'assets:', 'awkward']);
 $size = $opts['size'] ?? 'small';
 isset(SIZES[$size]) || exit("generate: unknown size $size\n");
 $cfg = ['size' => $size, 'seed' => (int) ($opts['seed'] ?? 1001)] + SIZES[$size];
-foreach (['articles', 'products', 'events', 'people', 'tags'] as $k) {
+foreach (['docs', 'articles', 'products', 'events', 'people', 'tags'] as $k) {
     if (isset($opts[$k])) {
         $cfg[$k] = max(4, (int) $opts[$k]);
     }
@@ -515,6 +515,22 @@ if ($cfg['awkward']) {
     require __DIR__.'/generate_awkward.php';
 }
 
+// ---------------------------------------------------------------- docs
+
+// A flat, orderable collection: what you drag about in the Control Panel's tree. Reordering it is the
+// `reorder` scenario. It has its own random stream, written last, so the rest of the site is the same bytes
+// as before it existed.
+$gd = new Gen($cfg['seed'] + 1);
+writeYaml("$root/content/collections/docs.yaml", ['title' => 'Docs', 'route' => '/docs/{slug}', 'template' => 'default', 'structure' => ['max_depth' => 1], 'sites' => ['en']]);
+$docTree = [];
+for ($i = 0; $i < $cfg['docs']; $i++) {
+    $id = $gd->uuid();
+    $slug = sprintf('doc-%05d', $i);
+    writeEntry("$root/content/collections/docs/en/$slug.md", ['id' => $id, 'title' => ucfirst($gd->words($gd->int(2, 5))), 'intro' => $gd->sentence(20), 'updated_at' => T0 + $i]);
+    $docTree[] = ['entry' => $id];
+}
+writeYaml("$root/content/trees/collections/en/docs.yaml", ['tree' => $docTree]);
+
 // ---------------------------------------------------------------- manifest
 
 $at = fn (string $c, float $f) => $slugs[$c][(int) ($f * (count($slugs[$c]) - 1))];
@@ -525,7 +541,7 @@ $manifest = [
     'config' => $cfg,
     'counts' => [
         'articles' => $cfg['articles'], 'products' => $cfg['products'], 'events' => $cfg['events'], 'people' => $cfg['people'],
-        'pages' => count($pageIds), 'categories' => count($categories), 'tags' => count($tags), 'nav_nodes' => $counts,
+        'pages' => count($pageIds), 'docs' => $cfg['docs'], 'categories' => count($categories), 'tags' => count($tags), 'nav_nodes' => $counts,
     ],
     // scenario => [url, expected status]
     'pages' => [
