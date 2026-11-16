@@ -9,7 +9,7 @@
  *
  *   php bench/search.php [--build]
  *
- * Prints one JSON line: {"ms":61.6,"peak_mem_mb":50.1,"total":303,"ids":"<md5>"}
+ * Prints one JSON line: {"ms":61.6,"total":303,"ids":"<md5>"}
  */
 
 require __DIR__.'/lib.php';
@@ -37,7 +37,6 @@ $ms = (hrtime(true) - $t) / 1e6;
 
 bench_emit([
     'ms' => round($ms, 3),
-    'peak_mem_mb' => round(memory_get_peak_usage() / 1048576, 2),
     'total' => $page->total(),
     'ids' => md5(implode(',', collect($page->items())->map(fn ($r) => $r->getSearchable()->id())->all())),
 ]);

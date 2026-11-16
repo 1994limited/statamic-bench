@@ -54,7 +54,7 @@ statamic-bench
       warm (one PHP process per request, like PHP-FPM), single Stache queries and a paginated
       search, reordering a structured collection, entry saves, and static:warm against PHP's
       built-in server. --heavy is how many samples the long scenarios (builds, saves, reorders)
-      take (default 3); --warms is how many static:warm runs (default 2).
+      take (default 3); --warms is how many static:warm runs (default the same as --heavy).
 
   bin/bench compare <a> <b> [--rounds=3] [--r=10] [--heavy=3] [--warms=2] [--only=...] [--skip=...]
       Run both targets in alternating order for some rounds and print the difference.
@@ -344,7 +344,10 @@ function run_target(string $dir, array $opts, bool $quiet = false): array
     $heavy = max(1, (int) ($opts['heavy'] ?? min(3, $r)));
     $scenarios = [];
     $add = function (string $name, array $sample) use (&$scenarios) {
-        foreach (['ms', 'boot_ms', 'peak_mem_mb', 'requests'] as $k) {
+        // the load when the sample finished, so busy samples can be found afterwards; and what the scenario
+        // found (counts, ids), so two versions can be shown to have answered the same
+        $sample['load'] = round(sys_getloadavg()[0] ?? 0, 2);
+        foreach (['ms', 'boot_ms', 'peak_mem_mb', 'requests', 'found', 'total', 'ids', 'entries', 'first_after', 'load'] as $k) {
             if (isset($sample[$k])) {
                 $scenarios[$name][$k][] = $sample[$k];
             }
@@ -417,6 +420,9 @@ function run_target(string $dir, array $opts, bool $quiet = false): array
         'query_like' => ['bench/queries.php', '--kind=like'],
         'query_like_ids' => ['bench/queries.php', '--kind=like_ids'],
         'query_latest' => ['bench/queries.php', '--kind=latest'],
+        // the same queries as the first thing a fresh process asks, so loading the indexes they need is in the time
+        'query_like_first' => ['bench/queries.php', '--kind=like', '--first'],
+        'query_latest_first' => ['bench/queries.php', '--kind=latest', '--first'],
         'search_paginate' => ['bench/search.php'],
     ], fn ($name) => $wanted($name), ARRAY_FILTER_USE_KEY);
     if ($queries) {
@@ -434,26 +440,41 @@ function run_target(string $dir, array $opts, bool $quiet = false): array
             $log('.');
         }
     }
-    if ($wanted('reorder') && ($m['counts']['docs'] ?? 0) > 1) {
+    // Reorders, saves and warms write content (and the code under test may write it back differently), so each
+    // sample starts from the content as generated and a Stache built from it.
+    $fresh = function () use ($dir) {
+        restore_fixture($dir);
         child($dir, ['bench/build.php']);
-        child($dir, ['bench/reorder.php']);
-        for ($i = 0; $i < $heavy; $i++) {
-            $add('reorder', child($dir, ['bench/reorder.php']));
-            $log('.');
+    };
+    if ($wanted('reorder')) {
+        if (($m['counts']['docs'] ?? 0) > 1) {
+            $fresh();
+            child($dir, ['bench/reorder.php']);
+            for ($i = 0; $i < $heavy; $i++) {
+                $fresh();
+                $add('reorder', child($dir, ['bench/reorder.php']));
+                $log('.');
+            }
+        } else {
+            $log("\nreorder skipped: this target's content has no docs collection (run `bin/bench generate` again)\n");
         }
     }
     if ($wanted('save')) {
         for ($i = 0; $i < $heavy; $i++) {
+            $fresh();
             $add('save', child($dir, ['bench/save.php']));
             $log('.');
         }
     }
     if ($wanted('static_warm')) {
-        child($dir, ['bench/build.php']);
-        for ($i = 0; $i < max(1, (int) ($opts['warms'] ?? min(2, $heavy))); $i++) {
+        $fresh();
+        static_warm($dir);   // untimed: compiles what the server runs, as every other group's first pass does
+        for ($i = 0; $i < max(1, (int) ($opts['warms'] ?? $heavy)); $i++) {
+            $fresh();
             $add('static_warm', static_warm($dir));
             $log('.');
         }
+        restore_fixture($dir);
     }
     $log("\n");
 
@@ -1071,7 +1092,7 @@ function mad(array $xs): float
 
 function ms(float $ms): string
 {
-    return $ms >= 1000 ? number_format($ms, 0) : sprintf('%.1f', $ms);
+    return $ms >= 1000 ? number_format($ms, 0) : sprintf($ms < 1 ? '%.2f' : '%.1f', $ms);
 }
 
 function print_table(array $head, array $rows): void

@@ -7,7 +7,7 @@
  *
  *   php bench/reorder.php
  *
- * Prints one JSON line: {"ms":252.0,"peak_mem_mb":48.0,"entries":1000,"first_after":"<id>"}
+ * Prints one JSON line: {"ms":252.0,"entries":1000,"first_after":"<id>"}
  */
 
 require __DIR__.'/lib.php';
@@ -24,7 +24,6 @@ $moved[] = array_shift($moved);
 $t = hrtime(true);
 $tree->tree($moved)->save();
 $ms = (hrtime(true) - $t) / 1e6;
-$peak = memory_get_peak_usage();
 
 // the order the save left, as a query sees it
 $first = Entry::query()->where('collection', 'docs')->orderBy('order')->first()?->id();
@@ -32,7 +31,6 @@ $tree->tree($original)->save();
 
 bench_emit([
     'ms' => round($ms, 3),
-    'peak_mem_mb' => round($peak / 1048576, 2),
     'entries' => count($moved),
     'first_after' => $first,
 ]);
